@@ -1,10 +1,10 @@
 # The Tapestry — implemented vertical session history
 
-The runtime Tapestry is a read-only, rebuildable projection of Eventloom's
-sealed daily shards. It is a history of **sessions growing upward from their
-start**: vertical position is time; each session segment is an upright woven
-from the events it contains. Horizontal position is only collision-aware
-placement. It does not encode agent lanes.
+The runtime Tapestry is a read-only projection of the sealed daily shards.
+Sessions grow upward from their start. The renderer hangs that history as
+linen on a rod: each session is a band of dyed weft, crossed by the cloth's
+warp. Width follows activity. Horizontal position is only collision-aware
+placement, not an agent lane.
 
 ## Runtime
 
