@@ -2,10 +2,10 @@
 
 The runtime Tapestry is a read-only projection of the sealed daily shards.
 Sessions grow upward from their start. The renderer hangs that history as
-linen on a rod: each session is a solid dyed band. A new session adds a
-lane to the right; the cloth is not scaled to fit the window. Width still
-follows activity. Horizontal position is only collision-aware placement,
-not an agent lane.
+linen on a rod. Threads begin at the lower left and are packed edge to edge.
+A thread that ends or narrows pulls the ones to its right back toward the
+left. A new session extends the cloth to the right. Width still follows
+activity.
 
 ![Demo weave](tapestry-demo.png)
 

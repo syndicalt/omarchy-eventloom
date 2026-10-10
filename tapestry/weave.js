@@ -3,7 +3,6 @@ const ctx = canvas.getContext("2d");
 const panel = document.querySelector("#panel");
 const empty = document.querySelector("#empty");
 const DYES = ["#d94b3c", "#3e8c49", "#e2b12a", "#3d78b4", "#d36b96", "#e07a32", "#6a4d96"];
-const LANE = 112;
 const state = { spec: null, sessions: [], scale: 1, panX: 0, panY: 0, drag: null, selected: null, layout: [], reveal: 1, needle: null };
 
 const hash = (value) => {
@@ -63,56 +62,127 @@ function field() {
   };
 }
 
-function columnCount() {
-  return Math.max(1, state.spec?.columnCount || Math.max(...state.sessions.map((s) => (s.column ?? 0) + 1), 1));
-}
-
 function columns(frame) {
-  const cols = columnCount();
-  return { cols, pitch: LANE, origin: frame.left };
+  return { origin: frame.left };
 }
 
-function position(session, frame) {
-  const span = state.domain.hi - state.domain.lo;
-  const y = (t) => frame.top + frame.height - ((t - state.domain.lo) / span) * frame.height * state.scale + state.panY;
-  const { pitch, origin } = columns(frame);
-  return {
-    x: origin + ((session.column ?? 0) + 0.5) * pitch * state.scale + state.panX,
-    y0: y(session.start),
-    y1: y(session.end),
-    y,
-  };
+function yAt(frame, time) {
+  const { lo, hi } = state.domain;
+  const span = hi - lo || 1;
+  return frame.top + frame.height - ((time - lo) / span) * frame.height * state.scale + state.panY;
 }
 
-function widthsOf(session) {
-  const raw = session.samples?.length ? session.samples : [0.42];
-  return raw.map((value) => {
-    const activity = Math.max(0, Math.min(1, value));
-    return (0.62 + activity * 0.38) * (LANE / 2);
-  });
+function threadOrder() {
+  return [...state.sessions].sort((a, b) => a.start - b.start || (a.column ?? 0) - (b.column ?? 0) || String(a.id).localeCompare(String(b.id)));
 }
 
-function halfAt(widths, t) {
-  if (widths.length === 1) return widths[0];
-  const x = Math.max(0, Math.min(0.9999, t)) * (widths.length - 1);
+function bandWidth(session, time) {
+  if (time <= session.start || time >= session.end) return 0;
+  const span = session.end - session.start || 1;
+  const u = (time - session.start) / span;
+  const taper = Math.min(1, Math.min(u, 1 - u) / 0.07);
+  const samples = session.samples?.length ? session.samples : [0.6];
+  const x = Math.max(0, Math.min(0.999, u)) * Math.max(1, samples.length - 1);
   const i = Math.floor(x);
   const f = x - i;
   const ease = f * f * (3 - 2 * f);
-  return widths[i] * (1 - ease) + (widths[i + 1] ?? widths[i]) * ease;
+  const sample = samples.length === 1 ? samples[0] : samples[i] * (1 - ease) + samples[Math.min(samples.length - 1, i + 1)] * ease;
+  const activity = 0.78 + Math.max(0, Math.min(1, sample)) * 0.22;
+  return taper * activity * 92;
 }
 
-function silhouette(x, y0, y1, widths) {
-  const steps = Math.max(10, Math.round(Math.abs(y0 - y1) / 7));
+function weaveStack(frame) {
+  const order = threadOrder();
+  const steps = Math.max(90, Math.round(frame.height / 3));
+  const { lo, hi } = state.domain;
+  const left = frame.left + state.panX;
+  const slices = [];
+  let right = left;
+  for (let i = 0; i <= steps; i++) {
+    const time = lo + ((hi - lo) * i) / steps;
+    let x = left;
+    const segs = [];
+    for (const session of order) {
+      const w = bandWidth(session, time) * state.scale;
+      segs.push({ id: session.id, x0: x, x1: x + w });
+      x += w;
+    }
+    if (x > right) right = x;
+    slices.push({ y: yAt(frame, time), time, segs, right: x });
+  }
+  return { order, slices, left, right };
+}
+
+function segAt(id, y) {
+  let best = null;
+  let bestD = Infinity;
+  for (const slice of state.weave?.slices || []) {
+    const d = Math.abs(slice.y - y);
+    if (d < bestD) {
+      best = slice;
+      bestD = d;
+    }
+  }
+  return best?.segs.find((seg) => seg.id === id) ?? null;
+}
+
+function centerAt(id, time) {
+  let best = state.weave.slices[0];
+  let bestD = Infinity;
+  for (const slice of state.weave.slices) {
+    const d = Math.abs(slice.time - time);
+    if (d < bestD) {
+      best = slice;
+      bestD = d;
+    }
+  }
+  const seg = best.segs.find((item) => item.id === id);
+  return seg ? (seg.x0 + seg.x1) / 2 : state.weave.left;
+}
+
+function streamPoints(id) {
+  const slices = state.weave.slices;
   const left = [];
   const right = [];
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const y = y0 + (y1 - y0) * t;
-    const w = halfAt(widths, t);
-    left.push([x - w, y]);
-    right.push([x + w, y]);
-  }
+  slices.forEach((slice, index) => {
+    const seg = slice.segs.find((item) => item.id === id);
+    const width = seg.x1 - seg.x0;
+    const around = [slices[index - 1], slices[index + 1]].some((near) => {
+      if (!near) return false;
+      const other = near.segs.find((item) => item.id === id);
+      return other && other.x1 - other.x0 > 0.4;
+    });
+    if (width < 0.4 && !around) return;
+    left.push([seg.x0, slice.y]);
+    right.push([seg.x1 + (width > 0.4 ? 0.8 : 0), slice.y]);
+  });
   return left.concat(right.reverse());
+}
+
+function clothOutline(weave, pad) {
+  const slices = weave.slices;
+  const bottom = slices[0].y;
+  const top = slices[slices.length - 1].y;
+  const hem = 86;
+  ctx.beginPath();
+  ctx.moveTo(weave.left - pad, bottom + hem);
+  ctx.lineTo(weave.right + pad, bottom + hem);
+  ctx.lineTo(weave.right + pad, bottom);
+  ctx.lineTo(slices[0].right + pad, bottom);
+  for (let i = 1; i < slices.length; i++) ctx.lineTo(slices[i].right + pad, slices[i].y);
+  ctx.lineTo(weave.left - pad, top - pad);
+  ctx.closePath();
+}
+
+function weaveBounds(weave) {
+  const top = weave.slices[weave.slices.length - 1].y;
+  const bottom = weave.slices[0].y;
+  return {
+    x: weave.left - 18,
+    y: top - 18,
+    w: Math.max(200, weave.right - weave.left) + 36,
+    h: bottom + 86 - (top - 18),
+  };
 }
 
 function trace(points) {
@@ -123,9 +193,7 @@ function trace(points) {
 }
 
 function clothRect(frame) {
-  const { cols, pitch, origin } = columns(frame);
-  const span = cols * pitch * state.scale + 48;
-  return { x: origin - 36 + state.panX, y: frame.top - 8, w: span + 72, h: frame.height + 96 };
+  return { x: frame.left - 36, y: frame.top - 8, w: Math.max(280, frame.width * 0.46), h: frame.height + 96 };
 }
 
 function roundRect(x, y, w, h, r) {
@@ -179,12 +247,20 @@ function drawHanging(rect) {
   linen.addColorStop(0.55, "#d7c094");
   linen.addColorStop(1, "#c6ad80");
   ctx.fillStyle = linen;
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  if (state.weave) clothOutline(state.weave, 14);
+  else {
+    ctx.beginPath();
+    ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  }
+  ctx.fill();
   ctx.restore();
 
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(rect.x + 7, rect.y + 7, rect.w - 14, rect.h - 14);
+  if (state.weave) clothOutline(state.weave, 8);
+  else {
+    ctx.beginPath();
+    ctx.rect(rect.x + 7, rect.y + 7, rect.w - 14, rect.h - 14);
+  }
   ctx.clip();
   ctx.beginPath();
   for (let y = rect.y + 8; y < rect.y + rect.h - 8; y += 4) {
@@ -205,11 +281,16 @@ function drawHanging(rect) {
   ctx.restore();
 
   ctx.strokeStyle = "#6d5132";
-  ctx.lineWidth = 9;
-  ctx.strokeRect(rect.x + 4.5, rect.y + 4.5, rect.w - 9, rect.h - 9);
-  ctx.strokeStyle = "rgba(255, 236, 204, 0.35)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(rect.x + 11, rect.y + 11, rect.w - 22, rect.h - 22);
+  ctx.lineWidth = 8;
+  if (state.weave) {
+    clothOutline(state.weave, 14);
+    ctx.stroke();
+  } else {
+    ctx.strokeRect(rect.x + 4.5, rect.y + 4.5, rect.w - 9, rect.h - 9);
+    ctx.strokeStyle = "rgba(255, 236, 204, 0.35)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rect.x + 11, rect.y + 11, rect.w - 22, rect.h - 22);
+  }
 }
 
 function drawWarp(rect) {
@@ -245,71 +326,77 @@ function sessionMarks(session) {
   return marks;
 }
 
-function drawUpright(session, frame) {
-  const p = position(session, frame);
-  const widths = widthsOf(session);
-  const top = Math.min(p.y0, p.y1);
-  const bot = Math.max(p.y0, p.y1);
+function drawStream(session, frame) {
+  const points = streamPoints(session.id);
+  if (points.length < 4) return;
+  const y0 = yAt(frame, session.start);
+  const y1 = yAt(frame, session.end);
+  const top = Math.min(y0, y1);
+  const bot = Math.max(y0, y1);
   if (state.needle != null && state.needle > bot + 1) return;
   const partial = state.needle != null && state.needle > top;
+  const color = dye(session.actor);
+  const selected = state.selected?.id === session.id;
   ctx.save();
   if (partial) {
     ctx.beginPath();
     ctx.rect(0, state.needle, innerWidth, Math.max(0, innerHeight - state.needle));
     ctx.clip();
   }
-  const points = silhouette(p.x, p.y0, p.y1, widths);
-  const color = dye(session.actor);
-  const selected = state.selected?.id === session.id;
-
-  ctx.save();
-  ctx.translate(3, 5);
   trace(points);
-  ctx.fillStyle = "rgba(48, 28, 12, 0.22)";
+  ctx.fillStyle = color;
   ctx.fill();
-  ctx.restore();
-
   ctx.save();
   trace(points);
   ctx.clip();
-  ctx.fillStyle = color;
-  ctx.fillRect(p.x - LANE, top - 2, LANE * 2, bot - top + 4);
   let lastY = null;
   for (const event of sessionMarks(session)) {
-    const y = p.y(Date.parse(event.ts));
+    const y = yAt(frame, Date.parse(event.ts));
     if (lastY !== null && Math.abs(y - lastY) < 8) continue;
     lastY = y;
-    const t = (y - p.y0) / (p.y1 - p.y0 || 1);
-    const w = halfAt(widths, Math.max(0, Math.min(1, t))) * 0.72;
+    const seg = segAt(session.id, y);
+    if (!seg || seg.x1 - seg.x0 < 8) continue;
     if (event.family === "tool") {
       ctx.strokeStyle = "rgba(255, 248, 232, 0.92)";
       ctx.lineWidth = 1.25;
       ctx.beginPath();
-      ctx.moveTo(p.x - w, y + 3);
-      ctx.lineTo(p.x - w * 0.25, y - 3);
-      ctx.moveTo(p.x - w * 0.15, y + 3);
-      ctx.lineTo(p.x + w * 0.55, y - 3);
+      ctx.moveTo(seg.x0 + 6, y + 3);
+      ctx.lineTo(seg.x0 + (seg.x1 - seg.x0) * 0.42, y - 3);
+      ctx.moveTo(seg.x0 + (seg.x1 - seg.x0) * 0.48, y + 3);
+      ctx.lineTo(seg.x1 - 6, y - 3);
       ctx.stroke();
     } else if (event.family === "approval") {
+      const x = (seg.x0 + seg.x1) / 2;
       ctx.strokeStyle = "#e8b15a";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(p.x - 6, y - 4);
-      ctx.lineTo(p.x + 6, y + 4);
-      ctx.moveTo(p.x + 6, y - 4);
-      ctx.lineTo(p.x - 6, y + 4);
+      ctx.moveTo(x - 6, y - 4);
+      ctx.lineTo(x + 6, y + 4);
+      ctx.moveTo(x + 6, y - 4);
+      ctx.lineTo(x - 6, y + 4);
       ctx.stroke();
     }
   }
   ctx.restore();
-
   trace(points);
-  ctx.strokeStyle = selected ? "rgba(255, 248, 230, 0.95)" : shade(color, -40);
-  ctx.lineWidth = selected ? 2.2 : 1;
+  ctx.strokeStyle = selected ? "#f8f1e4" : shade(color, -42);
+  ctx.lineWidth = selected ? 2.2 : 1.15;
   ctx.stroke();
-
+  const p = {
+    y0,
+    y1,
+    x: centerAt(session.id, session.end),
+    y: (time) => yAt(frame, time),
+    xAt: (time) => centerAt(session.id, time),
+  };
   if (!partial) drawCap(session, p, color);
-  state.layout.push({ s: session, p, widths, width: Math.max(...widths) });
+  let label = null;
+  for (const slice of state.weave.slices) {
+    const seg = slice.segs.find((item) => item.id === session.id);
+    const width = seg.x1 - seg.x0;
+    if (!label || width > label.width) label = { x: (seg.x0 + seg.x1) / 2, y: slice.y, width };
+  }
+  state.layout.push({ s: session, p, label });
   ctx.restore();
 }
 
@@ -369,8 +456,8 @@ function drawSplice(from, to) {
   ctx.lineCap = "round";
   for (const offset of [-2.2, 2.2]) {
     ctx.beginPath();
-    ctx.moveTo(from.p.x + offset, from.p.y1);
-    ctx.bezierCurveTo(from.p.x + 42, from.p.y1 - 28, to.p.x - 42, to.p.y0 + 28, to.p.x + offset, to.p.y0);
+    ctx.moveTo(from.p.xAt(from.s.end) + offset, from.p.y1);
+    ctx.bezierCurveTo(from.p.xAt(from.s.end) + 42, from.p.y1 - 28, to.p.xAt(to.s.start) - 42, to.p.y0 + 28, to.p.xAt(to.s.start) + offset, to.p.y0);
     ctx.strokeStyle = offset < 0 ? shade(color, -15) : shade(color, 28);
     ctx.lineWidth = 2;
     ctx.globalAlpha = 0.9;
@@ -385,13 +472,15 @@ function drawHandoff(handoff) {
   const to = state.layout.find((row) => row.s.sessionId === handoff.toSession);
   if (!from || !to) return;
   const y = from.p.y(handoff.at);
+  const x0 = from.p.xAt(handoff.at);
+  const x1 = to.p.xAt(to.s.start);
   ctx.save();
   ctx.setLineDash([7, 5]);
   ctx.lineCap = "round";
   for (const offset of [-1.6, 1.6]) {
     ctx.beginPath();
-    ctx.moveTo(from.p.x, y + offset);
-    ctx.quadraticCurveTo((from.p.x + to.p.x) / 2, y - 46, to.p.x + offset, to.p.y0);
+    ctx.moveTo(x0, y + offset);
+    ctx.quadraticCurveTo((x0 + x1) / 2, y - 46, x1 + offset, to.p.y0);
     ctx.strokeStyle = offset < 0 ? "#8d5ea8" : "#e7c0f2";
     ctx.lineWidth = 1.8;
     ctx.stroke();
@@ -400,7 +489,7 @@ function drawHandoff(handoff) {
   ctx.strokeStyle = "#f0d8f6";
   ctx.lineWidth = 1.2;
   ctx.beginPath();
-  ctx.arc(to.p.x, to.p.y0, 4.5, 0, Math.PI * 2);
+  ctx.arc(x1, to.p.y0, 4.5, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
@@ -411,21 +500,22 @@ function drawNameplates() {
   ctx.textBaseline = "middle";
   ctx.font = "600 14px Palatino, Georgia, serif";
   for (const row of state.layout) {
-    const mid = (row.p.y0 + row.p.y1) / 2;
-    if (!woven(mid)) continue;
+    const mid = row.label?.y ?? (row.p.y0 + row.p.y1) / 2;
+    const x = row.label?.x ?? row.p.x;
+    if (!woven(mid) || (row.label?.width ?? 0) < 28) continue;
     const sid = String(row.s.sessionId);
     const w = Math.ceil(ctx.measureText(sid).width + 16);
     const h = 22;
-    const x = row.p.x - w / 2;
+    const x0 = x - w / 2;
     const y = mid - h / 2;
     ctx.fillStyle = "rgba(255, 248, 236, 0.96)";
     ctx.strokeStyle = "#5c432c";
     ctx.lineWidth = 1;
-    roundRect(x, y, w, h, 3);
+    roundRect(x0, y, w, h, 3);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#24180e";
-    ctx.fillText(sid, row.p.x, y + h / 2);
+    ctx.fillText(sid, x, y + h / 2);
   }
   ctx.restore();
 }
@@ -545,12 +635,13 @@ function draw() {
   ctx.lineJoin = "round";
   drawRoom();
   const frame = field();
-  const rect = clothRect(frame);
+  state.needle = state.sessions.length ? stitchY(frame) : null;
+  state.weave = state.sessions.length ? weaveStack(frame) : null;
+  const rect = state.weave ? weaveBounds(state.weave) : clothRect(frame);
   drawHanging(rect);
   if (!state.sessions.length) return;
-  state.needle = stitchY(frame);
   state.layout = [];
-  for (const session of state.sessions) drawUpright(session, frame);
+  for (const session of state.weave.order) drawStream(session, frame);
   for (const row of state.layout) {
     if (!row.s.resumed || !row.s.resumeOf) continue;
     const from = state.layout.find((other) => other.s.id === row.s.resumeOf);
@@ -603,12 +694,11 @@ canvas.addEventListener("pointerup", (event) => {
   state.drag = null;
   if (moved >= 5) return;
   const hit = state.layout.slice().reverse().find((row) => {
-    const top = Math.min(row.p.y0, row.p.y1) - 22;
+    const seg = segAt(row.s.id, event.clientY);
+    if (!seg || seg.x1 - seg.x0 < 3) return false;
+    const top = Math.min(row.p.y0, row.p.y1) - 16;
     const bot = Math.max(row.p.y0, row.p.y1) + 10;
-    if (event.clientY < top || event.clientY > bot) return false;
-    const t = (event.clientY - row.p.y0) / (row.p.y1 - row.p.y0 || 1);
-    const w = halfAt(row.widths, Math.max(0, Math.min(1, t)));
-    return Math.abs(event.clientX - row.p.x) <= w + 10;
+    return event.clientY >= top && event.clientY <= bot && event.clientX >= seg.x0 - 4 && event.clientX <= seg.x1 + 4;
   });
   if (hit) select(hit);
   else {
