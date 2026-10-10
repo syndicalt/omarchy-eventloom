@@ -6,6 +6,8 @@ linen on a rod: each session is a band of dyed weft, crossed by the cloth's
 warp. Width follows activity. Horizontal position is only collision-aware
 placement, not an agent lane.
 
+![Demo weave](tapestry-demo.png)
+
 ## Runtime
 
     ~/.local/state/omarchy/agents/logs/*.jsonl
