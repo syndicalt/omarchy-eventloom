@@ -2,10 +2,10 @@
 
 The runtime Tapestry is a read-only projection of the sealed daily shards.
 Sessions grow upward from their start. The renderer hangs that history as
-linen on a rod. Threads begin at the lower left and are packed edge to edge.
-A thread that ends or narrows pulls the ones to its right back toward the
-left. A new session extends the cloth to the right. Width still follows
-activity.
+linen on a rod. Threads begin at the lower left, sit edge to edge, and fill
+out to both selvedges. A thread that ends gives its width back toward the
+left. The cloth is only as wide as the weave, so a new session can still
+extend it to the right.
 
 ![Demo weave](tapestry-demo.png)
 

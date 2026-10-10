@@ -80,7 +80,7 @@ function bandWidth(session, time) {
   if (time <= session.start || time >= session.end) return 0;
   const span = session.end - session.start || 1;
   const u = (time - session.start) / span;
-  const taper = Math.min(1, Math.min(u, 1 - u) / 0.07);
+  const taper = u > 0.94 ? (1 - u) / 0.06 : 1;
   const samples = session.samples?.length ? session.samples : [0.6];
   const x = Math.max(0, Math.min(0.999, u)) * Math.max(1, samples.length - 1);
   const i = Math.floor(x);
@@ -110,7 +110,53 @@ function weaveStack(frame) {
     if (x > right) right = x;
     slices.push({ y: yAt(frame, time), time, segs, right: x });
   }
-  return { order, slices, left, right };
+  const radius = 5;
+  const smoothed = order.map((session) => slices.map((slice) => {
+    const index = slices.indexOf(slice);
+    let sum = 0;
+    let count = 0;
+    for (let j = index - radius; j <= index + radius; j++) {
+      if (j < 0 || j >= slices.length) continue;
+      const seg = slices[j].segs.find((item) => item.id === session.id);
+      sum += seg.x1 - seg.x0;
+      count++;
+    }
+    return sum / count;
+  }));
+  right = left;
+  slices.forEach((slice, index) => {
+    let x = left;
+    order.forEach((session, sessionIndex) => {
+      const width = smoothed[sessionIndex][index];
+      const seg = slice.segs.find((item) => item.id === session.id);
+      seg.x0 = x;
+      seg.x1 = x + width;
+      x += width;
+    });
+    slice.right = x;
+    if (x > right) right = x;
+  });
+  const span = Math.max(1, right - left);
+  for (const slice of slices) {
+    const sum = slice.segs.reduce((total, seg) => total + (seg.x1 - seg.x0), 0);
+    if (sum < 1) {
+      for (const seg of slice.segs) {
+        seg.x0 = left;
+        seg.x1 = left;
+      }
+      slice.right = left;
+      continue;
+    }
+    let x = left;
+    for (const seg of slice.segs) {
+      const width = ((seg.x1 - seg.x0) / sum) * span;
+      seg.x0 = x;
+      seg.x1 = x + width;
+      x += width;
+    }
+    slice.right = left + span;
+  }
+  return { order, slices, left, right: left + span };
 }
 
 function segAt(id, y) {
@@ -157,21 +203,6 @@ function streamPoints(id) {
     right.push([seg.x1 + (width > 0.4 ? 0.8 : 0), slice.y]);
   });
   return left.concat(right.reverse());
-}
-
-function clothOutline(weave, pad) {
-  const slices = weave.slices;
-  const bottom = slices[0].y;
-  const top = slices[slices.length - 1].y;
-  const hem = 86;
-  ctx.beginPath();
-  ctx.moveTo(weave.left - pad, bottom + hem);
-  ctx.lineTo(weave.right + pad, bottom + hem);
-  ctx.lineTo(weave.right + pad, bottom);
-  ctx.lineTo(slices[0].right + pad, bottom);
-  for (let i = 1; i < slices.length; i++) ctx.lineTo(slices[i].right + pad, slices[i].y);
-  ctx.lineTo(weave.left - pad, top - pad);
-  ctx.closePath();
 }
 
 function weaveBounds(weave) {
@@ -247,20 +278,12 @@ function drawHanging(rect) {
   linen.addColorStop(0.55, "#d7c094");
   linen.addColorStop(1, "#c6ad80");
   ctx.fillStyle = linen;
-  if (state.weave) clothOutline(state.weave, 14);
-  else {
-    ctx.beginPath();
-    ctx.rect(rect.x, rect.y, rect.w, rect.h);
-  }
-  ctx.fill();
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
   ctx.restore();
 
   ctx.save();
-  if (state.weave) clothOutline(state.weave, 8);
-  else {
-    ctx.beginPath();
-    ctx.rect(rect.x + 7, rect.y + 7, rect.w - 14, rect.h - 14);
-  }
+  ctx.beginPath();
+  ctx.rect(rect.x + 7, rect.y + 7, rect.w - 14, rect.h - 14);
   ctx.clip();
   ctx.beginPath();
   for (let y = rect.y + 8; y < rect.y + rect.h - 8; y += 4) {
@@ -282,15 +305,10 @@ function drawHanging(rect) {
 
   ctx.strokeStyle = "#6d5132";
   ctx.lineWidth = 8;
-  if (state.weave) {
-    clothOutline(state.weave, 14);
-    ctx.stroke();
-  } else {
-    ctx.strokeRect(rect.x + 4.5, rect.y + 4.5, rect.w - 9, rect.h - 9);
-    ctx.strokeStyle = "rgba(255, 236, 204, 0.35)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(rect.x + 11, rect.y + 11, rect.w - 22, rect.h - 22);
-  }
+  ctx.strokeRect(rect.x + 4.5, rect.y + 4.5, rect.w - 9, rect.h - 9);
+  ctx.strokeStyle = "rgba(255, 236, 204, 0.35)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rect.x + 11, rect.y + 11, rect.w - 22, rect.h - 22);
 }
 
 function drawWarp(rect) {
