@@ -8,6 +8,8 @@ placement, not an agent lane.
 
 ![Demo weave](tapestry-demo.png)
 
+![Weft still being thrown](tapestry-stitch.png)
+
 ## Runtime
 
     ~/.local/state/omarchy/agents/logs/*.jsonl
