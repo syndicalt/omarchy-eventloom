@@ -2,7 +2,8 @@ const canvas = document.querySelector("#cloth");
 const ctx = canvas.getContext("2d");
 const panel = document.querySelector("#panel");
 const empty = document.querySelector("#empty");
-const DYES = ["#3e6b4c", "#34597d", "#8d4630", "#684874", "#9a7430", "#2e5c58", "#7a3d4a"];
+const DYES = ["#d94b3c", "#3e8c49", "#e2b12a", "#3d78b4", "#d36b96", "#e07a32", "#6a4d96"];
+const LANE = 112;
 const state = { spec: null, sessions: [], scale: 1, panX: 0, panY: 0, drag: null, selected: null, layout: [], reveal: 1, needle: null };
 
 const hash = (value) => {
@@ -68,9 +69,7 @@ function columnCount() {
 
 function columns(frame) {
   const cols = columnCount();
-  const pitch = Math.min(176, frame.width / cols);
-  const origin = frame.left + (frame.width - pitch * cols) / 2;
-  return { cols, pitch, origin };
+  return { cols, pitch: LANE, origin: frame.left };
 }
 
 function position(session, frame) {
@@ -87,7 +86,10 @@ function position(session, frame) {
 
 function widthsOf(session) {
   const raw = session.samples?.length ? session.samples : [0.42];
-  return raw.map((value) => 11 + Math.max(0, Math.min(1, value)) * 32);
+  return raw.map((value) => {
+    const activity = Math.max(0, Math.min(1, value));
+    return (0.62 + activity * 0.38) * (LANE / 2);
+  });
 }
 
 function halfAt(widths, t) {
@@ -121,7 +123,9 @@ function trace(points) {
 }
 
 function clothRect(frame) {
-  return { x: frame.left - 46, y: frame.top - 8, w: frame.width + 92, h: frame.height + 96 };
+  const { cols, pitch, origin } = columns(frame);
+  const span = cols * pitch * state.scale + 48;
+  return { x: origin - 36 + state.panX, y: frame.top - 8, w: span + 72, h: frame.height + 96 };
 }
 
 function roundRect(x, y, w, h, r) {
@@ -209,10 +213,14 @@ function drawHanging(rect) {
 }
 
 function drawWarp(rect) {
-  const grown = state.reveal >= 1 ? 1 : Math.min(1, state.reveal / 0.18);
+  if (state.reveal >= 1) return;
+  const grown = Math.min(1, state.reveal / 0.18);
+  const top = rect.y + 12;
+  const reach = top + (rect.h - 24) * grown;
+  const limit = state.needle == null ? reach : Math.min(reach, state.needle);
   ctx.save();
   ctx.beginPath();
-  ctx.rect(rect.x + 12, rect.y + 12, rect.w - 24, (rect.h - 24) * grown);
+  ctx.rect(rect.x + 12, top, rect.w - 24, Math.max(0, limit - top));
   ctx.clip();
   ctx.lineWidth = 1;
   for (let x = rect.x + 16; x < rect.x + rect.w - 14; x += 6) {
@@ -264,47 +272,8 @@ function drawUpright(session, frame) {
   ctx.save();
   trace(points);
   ctx.clip();
-  const ground = ctx.createLinearGradient(p.x - 40, 0, p.x + 40, 0);
-  ground.addColorStop(0, shade(color, -28));
-  ground.addColorStop(0.5, color);
-  ground.addColorStop(1, shade(color, -28));
-  ctx.fillStyle = ground;
-  ctx.globalAlpha = selected ? 0.96 : 0.9;
-  ctx.fillRect(p.x - 80, top, 160, bot - top);
-  ctx.globalAlpha = 1;
-
-  let pass = (session.seed || 0) % 2;
-  for (let y = top + 2; y < bot - 1; y += 2.7) {
-    const t = (y - p.y0) / (p.y1 - p.y0 || 1);
-    const w = halfAt(widths, Math.max(0, Math.min(1, t)));
-    const shed = pass % 2 === 0;
-    ctx.beginPath();
-    ctx.moveTo(p.x - w + (shed ? 1.4 : 0), y);
-    ctx.lineTo(p.x + w - (shed ? 0 : 1.4), y);
-    ctx.strokeStyle = shed ? shade(color, 36) : shade(color, -18);
-    ctx.globalAlpha = shed ? 0.55 : 0.9;
-    ctx.lineWidth = 1.7;
-    ctx.stroke();
-    pass++;
-  }
-  ctx.globalAlpha = 1;
-
-  for (let ply = -1; ply <= 1; ply++) {
-    ctx.beginPath();
-    const steps = 24;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const y = p.y0 + (p.y1 - p.y0) * t;
-      const w = halfAt(widths, t);
-      const x = p.x + ply * w * 0.42 + Math.sin(y * 0.06 + session.seed + ply) * 0.8;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.strokeStyle = ply === 0 ? "rgba(255, 246, 226, 0.72)" : shade(color, ply > 0 ? 18 : -8);
-    ctx.lineWidth = ply === 0 ? 1.15 : 2.1;
-    ctx.stroke();
-  }
-
+  ctx.fillStyle = color;
+  ctx.fillRect(p.x - LANE, top - 2, LANE * 2, bot - top + 4);
   let lastY = null;
   for (const event of sessionMarks(session)) {
     const y = p.y(Date.parse(event.ts));
