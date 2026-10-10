@@ -51,6 +51,8 @@ ids, and the session inspector remains backed by the sealed records.
 ## Interaction
 
 - Drag pans; wheel zooms.
+- On load the warp is dressed, then a shuttle throws the weft upward from the start of the record. `prefers-reduced-motion` skips that.
+- Actor dye is a stitched patch in the lower right. Session cards name the session only.
 - Select an upright to inspect actor, session, time range, event count, tools,
   approvals, and outcome.
 - Resume splices and handoff cords persist as session context.

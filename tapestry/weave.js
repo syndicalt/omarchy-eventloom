@@ -3,7 +3,7 @@ const ctx = canvas.getContext("2d");
 const panel = document.querySelector("#panel");
 const empty = document.querySelector("#empty");
 const DYES = ["#3e6b4c", "#34597d", "#8d4630", "#684874", "#9a7430", "#2e5c58", "#7a3d4a"];
-const state = { spec: null, sessions: [], scale: 1, panX: 0, panY: 0, drag: null, selected: null, layout: [] };
+const state = { spec: null, sessions: [], scale: 1, panX: 0, panY: 0, drag: null, selected: null, layout: [], reveal: 1, needle: null };
 
 const hash = (value) => {
   let h = 2166136261;
@@ -50,8 +50,8 @@ function fit() {
 }
 
 function field() {
-  const top = 168;
-  const bottom = 52;
+  const top = 156;
+  const bottom = 108;
   return {
     left: 132,
     right: 56,
@@ -121,7 +121,7 @@ function trace(points) {
 }
 
 function clothRect(frame) {
-  return { x: frame.left - 46, y: frame.top - 8, w: frame.width + 92, h: frame.height + 16 };
+  return { x: frame.left - 46, y: frame.top - 8, w: frame.width + 92, h: frame.height + 96 };
 }
 
 function roundRect(x, y, w, h, r) {
@@ -209,9 +209,10 @@ function drawHanging(rect) {
 }
 
 function drawWarp(rect) {
+  const grown = state.reveal >= 1 ? 1 : Math.min(1, state.reveal / 0.18);
   ctx.save();
   ctx.beginPath();
-  ctx.rect(rect.x + 12, rect.y + 12, rect.w - 24, rect.h - 24);
+  ctx.rect(rect.x + 12, rect.y + 12, rect.w - 24, (rect.h - 24) * grown);
   ctx.clip();
   ctx.lineWidth = 1;
   for (let x = rect.x + 16; x < rect.x + rect.w - 14; x += 6) {
@@ -239,6 +240,16 @@ function sessionMarks(session) {
 function drawUpright(session, frame) {
   const p = position(session, frame);
   const widths = widthsOf(session);
+  const top = Math.min(p.y0, p.y1);
+  const bot = Math.max(p.y0, p.y1);
+  if (state.needle != null && state.needle > bot + 1) return;
+  const partial = state.needle != null && state.needle > top;
+  ctx.save();
+  if (partial) {
+    ctx.beginPath();
+    ctx.rect(0, state.needle, innerWidth, Math.max(0, innerHeight - state.needle));
+    ctx.clip();
+  }
   const points = silhouette(p.x, p.y0, p.y1, widths);
   const color = dye(session.actor);
   const selected = state.selected?.id === session.id;
@@ -253,8 +264,6 @@ function drawUpright(session, frame) {
   ctx.save();
   trace(points);
   ctx.clip();
-  const top = Math.min(p.y0, p.y1);
-  const bot = Math.max(p.y0, p.y1);
   const ground = ctx.createLinearGradient(p.x - 40, 0, p.x + 40, 0);
   ground.addColorStop(0, shade(color, -28));
   ground.addColorStop(0.5, color);
@@ -330,8 +339,9 @@ function drawUpright(session, frame) {
   ctx.lineWidth = selected ? 2.2 : 1;
   ctx.stroke();
 
-  drawCap(session, p, color);
+  if (!partial) drawCap(session, p, color);
   state.layout.push({ s: session, p, widths, width: Math.max(...widths) });
+  ctx.restore();
 }
 
 function drawCap(session, p, color) {
@@ -430,17 +440,15 @@ function drawNameplates() {
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.font = "600 14px Palatino, Georgia, serif";
   for (const row of state.layout) {
-    const actor = String(row.s.actor);
+    const mid = (row.p.y0 + row.p.y1) / 2;
+    if (!woven(mid)) continue;
     const sid = String(row.s.sessionId);
-    ctx.font = "600 15px Palatino, Georgia, serif";
-    const actorW = ctx.measureText(actor).width;
-    ctx.font = "13px Palatino, Georgia, serif";
-    const sidW = ctx.measureText(sid).width;
-    const w = Math.ceil(Math.max(actorW, sidW) + 18);
-    const h = 38;
+    const w = Math.ceil(ctx.measureText(sid).width + 16);
+    const h = 22;
     const x = row.p.x - w / 2;
-    const y = (row.p.y0 + row.p.y1) / 2 - h / 2;
+    const y = mid - h / 2;
     ctx.fillStyle = "rgba(255, 248, 236, 0.96)";
     ctx.strokeStyle = "#5c432c";
     ctx.lineWidth = 1;
@@ -448,13 +456,22 @@ function drawNameplates() {
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#24180e";
-    ctx.font = "600 15px Palatino, Georgia, serif";
-    ctx.fillText(actor, row.p.x, y + 13);
-    ctx.fillStyle = "#5c4634";
-    ctx.font = "13px Palatino, Georgia, serif";
-    ctx.fillText(sid, row.p.x, y + 28);
+    ctx.fillText(sid, row.p.x, y + h / 2);
   }
   ctx.restore();
+}
+
+function woven(y) {
+  return state.needle == null || state.needle <= y + 0.5;
+}
+
+function stitchY(frame) {
+  if (state.reveal >= 1 || !state.domain) return null;
+  const weave = Math.max(0, (state.reveal - 0.18) / 0.82);
+  const { lo, hi } = state.domain;
+  const span = hi - lo || 1;
+  const t = lo + span * weave;
+  return frame.top + frame.height - ((t - lo) / span) * frame.height * state.scale + state.panY;
 }
 
 function drawRuler(frame) {
@@ -485,23 +502,72 @@ function drawRuler(frame) {
 function drawKey(rect) {
   const actors = state.spec?.warp || [];
   if (!actors.length) return;
-  ctx.font = "16px Palatino, Georgia, serif";
+  ctx.save();
+  ctx.font = "15px Palatino, Georgia, serif";
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  const y = rect.y + rect.h + 22;
+  const rowH = 20;
+  const h = 16 + actors.length * rowH;
+  let w = 112;
+  for (const actor of actors) w = Math.max(w, Math.ceil(ctx.measureText(actor.actor).width) + 54);
+  const x = rect.x + rect.w - w - 20;
+  const y = rect.y + rect.h - h - 18;
+  ctx.fillStyle = "rgba(62, 40, 18, 0.18)";
+  ctx.fillRect(x + 3, y + 4, w, h);
+  ctx.fillStyle = "#f4e7cb";
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = "#6a4e32";
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([2.5, 2.5]);
+  ctx.strokeRect(x + 5, y + 5, w - 10, h - 10);
+  ctx.setLineDash([]);
+  for (const [cx, cy] of [[x + 5, y + 5], [x + w - 5, y + 5], [x + 5, y + h - 5], [x + w - 5, y + h - 5]]) {
+    ctx.beginPath();
+    ctx.moveTo(cx - 3, cy - 3);
+    ctx.lineTo(cx + 3, cy + 3);
+    ctx.moveTo(cx + 3, cy - 3);
+    ctx.lineTo(cx - 3, cy + 3);
+    ctx.stroke();
+  }
   actors.forEach((actor, i) => {
-    const x = rect.x + 8 + i * 148;
-    const color = dye(actor.actor);
-    ctx.strokeStyle = color;
+    const cy = y + 14 + i * rowH;
+    ctx.strokeStyle = dye(actor.actor);
     ctx.lineWidth = 5;
     ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.bezierCurveTo(x + 8, y - 3, x + 16, y + 3, x + 28, y);
+    ctx.moveTo(x + 16, cy);
+    ctx.lineTo(x + 34, cy);
     ctx.stroke();
-    ctx.fillStyle = "#f8f1e4";
-    ctx.fillText(actor.actor, x + 38, y);
+    ctx.fillStyle = "#24180e";
+    ctx.fillText(actor.actor, x + 42, cy);
   });
+  ctx.restore();
+}
+
+function drawShuttle(frame, rect) {
+  if (state.needle == null) return;
+  const y = state.needle;
+  const trip = ((state.reveal - 0.18) / 0.82) * 6;
+  const phase = trip % 2;
+  const u = phase < 1 ? phase : 2 - phase;
+  const x = rect.x + 24 + (rect.w - 48) * u;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 248, 230, 0.9)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(rect.x + 16, y);
+  ctx.lineTo(rect.x + rect.w - 16, y);
+  ctx.stroke();
+  ctx.fillStyle = "#5c3b22";
+  ctx.beginPath();
+  ctx.ellipse(x, y, 16, 5.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#f3e2bc";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.ellipse(x, y, 7, 2.2, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function draw() {
@@ -513,15 +579,22 @@ function draw() {
   const rect = clothRect(frame);
   drawHanging(rect);
   if (!state.sessions.length) return;
+  state.needle = stitchY(frame);
   state.layout = [];
   for (const session of state.sessions) drawUpright(session, frame);
   for (const row of state.layout) {
     if (!row.s.resumed || !row.s.resumeOf) continue;
     const from = state.layout.find((other) => other.s.id === row.s.resumeOf);
-    if (from) drawSplice(from, row);
+    if (from && woven(from.p.y1) && woven(row.p.y0)) drawSplice(from, row);
   }
-  for (const handoff of state.spec?.handoffs || []) drawHandoff(handoff);
+  for (const handoff of state.spec?.handoffs || []) {
+    const from = state.layout.find((row) => row.s.sessionId === handoff.fromSession);
+    const to = state.layout.find((row) => row.s.sessionId === handoff.toSession);
+    if (!from || !to) continue;
+    if (woven(from.p.y(handoff.at)) && woven(to.p.y0)) drawHandoff(handoff);
+  }
   drawWarp(rect);
+  drawShuttle(frame, rect);
   drawNameplates();
   drawRuler(frame);
   drawKey(rect);
@@ -594,10 +667,30 @@ async function boot() {
     state.sessions = state.spec.sessions || [];
     empty.hidden = state.sessions.length > 0;
     fit();
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!state.sessions.length || reduce) {
+      state.reveal = 1;
+      resize();
+      return;
+    }
+    state.reveal = 0;
+    state.stitchFrom = performance.now();
     resize();
+    requestAnimationFrame(stitchFrame);
   } catch {
     empty.hidden = false;
     resize();
+  }
+}
+
+function stitchFrame(now) {
+  const t = Math.min(1, (now - state.stitchFrom) / 2800);
+  state.reveal = t;
+  draw();
+  if (t < 1) requestAnimationFrame(stitchFrame);
+  else {
+    state.reveal = 1;
+    draw();
   }
 }
 
