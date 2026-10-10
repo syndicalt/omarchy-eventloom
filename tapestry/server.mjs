@@ -75,7 +75,7 @@ function loadShards(days) {
           id: e.id,
           day,
           line: i,
-          ts: e.timestamp ?? e.ts ?? new Date(0).toISOString(),
+          ts: e.timestamp ?? e.ts ?? null,
           type: e.type,
           family: EVENT_FAMILY[e.type] ?? "other",
           actor: e.actorId ?? e.actor ?? "unknown",
@@ -96,24 +96,78 @@ function loadShards(days) {
   return events;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MULTI_DAY_MS = 36 * 60 * 60 * 1000;
+
+export function eventTime(ts) {
+  const time = Date.parse(ts ?? "");
+  return Number.isFinite(time) ? time : null;
+}
+
+// Short wall-clock buckets inside a day; one bucket per day once a segment
+// spans more than a day and a half.
+export function activityBinCount(start, end) {
+  const span = Math.max(0, end - start);
+  if (span >= MULTI_DAY_MS) return Math.max(1, Math.ceil(span / DAY_MS));
+  return Math.max(3, Math.min(12, Math.ceil(span / (20 * 60 * 1000)) || 1));
+}
+
+function hashSeed(value) {
+  let hash = 2166136261;
+  for (const char of String(value)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  return hash >>> 0;
+}
+
+// Greedy interval packing. Overlapping segments do not share a column.
+export function placeColumns(sessions) {
+  const columns = [];
+  const ordered = [...sessions].sort((a, b) => a.start - b.start || a.end - b.end || String(a.id).localeCompare(String(b.id)));
+  for (const session of ordered) {
+    let placed = false;
+    for (let index = 0; index < columns.length; index++) {
+      if (columns[index] <= session.start) {
+        session.column = index;
+        columns[index] = session.end;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      session.column = columns.length;
+      columns.push(session.end);
+    }
+  }
+  return Math.max(1, columns.length);
+}
+
 // Derived, disposable session geometry. The raw stitches remain available for
 // close inspection; this only gives the renderer a stable overview shape.
 export function deriveSessions(stitches) {
+  const timed = stitches.filter((stitch) => eventTime(stitch.ts) !== null);
   const grouped = new Map();
-  for (const stitch of stitches) {
+  for (const stitch of timed) {
     const key = stitch.session ?? (stitch.actor + ":" + (stitch.thread ?? "unthreaded"));
     (grouped.get(key) ?? grouped.set(key, []).get(key)).push(stitch);
   }
   const sessions = [];
   for (const [sessionId, events] of grouped) {
-    let segment = null, previous = null, ordinal = 0;
-    for (const event of events) {
+    const ordered = [...events].sort((a, b) => eventTime(a.ts) - eventTime(b.ts));
+    let segment = null;
+    let previous = null;
+    let ordinal = 0;
+    for (const event of ordered) {
       const boundary = event.type === "agent.session.started" || event.type === "agent.session.resumed";
       if (!segment || boundary) {
         if (segment) sessions.push(segment);
+        const resumed = event.type === "agent.session.resumed";
         segment = {
-          id: sessionId + ":" + ordinal++, sessionId, actor: event.actor, thread: event.thread,
-          stitches: [], resumed: event.type === "agent.session.resumed", resumeOf: previous?.id ?? null,
+          id: sessionId + ":" + ordinal++,
+          sessionId,
+          actor: event.actor,
+          thread: event.thread,
+          stitches: [],
+          resumed,
+          resumeOf: resumed ? previous?.id ?? null : null,
         };
         previous = segment;
       }
@@ -123,44 +177,59 @@ export function deriveSessions(stitches) {
   }
   return sessions.map((session) => {
     const entries = session.stitches;
-    const start = Date.parse(entries[0].ts);
-    const end = Math.max(start + 60_000, Date.parse(entries.at(-1).ts));
-    const bins = Math.max(3, Math.min(12, Math.ceil((end - start) / (20 * 60_000))));
+    const start = eventTime(entries[0].ts);
+    const end = Math.max(start + 60_000, eventTime(entries.at(-1).ts));
+    const bins = activityBinCount(start, end);
     const counts = Array.from({ length: bins }, () => 0);
     for (const entry of entries) {
-      const i = Math.max(0, Math.min(bins - 1, Math.floor(((Date.parse(entry.ts) - start) / (end - start)) * bins)));
+      const i = Math.max(0, Math.min(bins - 1, Math.floor(((eventTime(entry.ts) - start) / (end - start)) * bins)));
       counts[i] += 1 + Math.min(2, Math.log2(1 + (entry.duration ?? 0) / 1000));
     }
     const peak = Math.max(...counts, 1);
     const final = entries.at(-1);
     const status = final.type === "agent.session.completed" ? "completed"
       : final.type === "agent.session.failed" ? "failed" : "open";
+    const activity = counts.map((count, i) => ({ t: (i + .5) / bins, count, value: count / peak }));
     return {
-      ...session, start, end, eventCount: entries.length, status,
+      id: session.id,
+      sessionId: session.sessionId,
+      actor: session.actor,
+      thread: session.thread,
+      start,
+      end,
+      events: entries.map((entry) => entry.id),
+      eventCount: entries.length,
+      toolCount: entries.filter((entry) => entry.family === "tool").length,
+      approvalCount: entries.filter((entry) => entry.family === "approval").length,
+      status,
       completion: status === "completed" || entries.some((entry) => entry.payload?.goal_completed === true),
       failure: status === "failed" || entries.some((entry) => !entry.ok),
-      activity: counts.map((count, i) => ({ t: (i + .5) / bins, count, value: count / peak })),
+      resumed: session.resumed,
+      resumeOf: session.resumeOf,
+      seed: hashSeed(session.id),
+      activity,
+      samples: activity.map((bin) => bin.value),
     };
   });
 }
 
 // Weave-spec: the full weaving instruction for the canvas.
 export function weaveSpec(events) {
-  const actors = [...new Set(events.map((e) => e.actor))].sort();
+  const skipped = events.filter((event) => eventTime(event.ts) === null).map((event) => event.id ?? null);
+  const timed = events.filter((event) => eventTime(event.ts) !== null);
+  const actors = [...new Set(timed.map((e) => e.actor))].sort();
   const warp = actors.map((actor, i) => ({ actor, x: i }));
 
-  // Stitches: one per event, positioned on its actor's warp.
-  const byTs = [...events].sort((a, b) => a.ts.localeCompare(b.ts));
-  const t0 = byTs[0]?.ts ?? 0;
-  const t1 = byTs.at(-1)?.ts ?? 1;
-  const span = Math.max(1, Date.parse(t1) - Date.parse(t0));
+  const byTs = [...timed].sort((a, b) => eventTime(a.ts) - eventTime(b.ts) || String(a.id).localeCompare(String(b.id)));
+  const t0 = byTs[0]?.ts ?? null;
+  const t1 = byTs.at(-1)?.ts ?? null;
+  const spanMs = t0 && t1 ? Math.max(1, eventTime(t1) - eventTime(t0)) : 1;
   const stitches = byTs.map((e) => ({
     ...e,
     warpIndex: actors.indexOf(e.actor),
-    t: (Date.parse(e.ts) - Date.parse(t0)) / span, // 0..1 position on the cloth
+    t: (eventTime(e.ts) - eventTime(t0)) / spanMs,
   }));
 
-  // Strands: correlation yarn between stitches of different warps/times.
   const byCorr = new Map();
   for (const s of stitches) {
     if (!s.correlation) continue;
@@ -172,10 +241,19 @@ export function weaveSpec(events) {
       strands.push({ correlation: corr, from: group[i].id, to: group[i + 1].id, kind: "correlation" });
     }
   }
-  // Handoff strands: dashed branch connections.
-  const handoffs = stitches.filter((s) => s.family === "handoff" && s.payload?.from && s.payload?.to);
+  const handoffs = stitches
+    .filter((s) => s.family === "handoff")
+    .map((s) => ({
+      id: s.id,
+      at: eventTime(s.ts),
+      fromSession: s.session ?? null,
+      toSession: s.payload?.to_session_id ?? s.payload?.to ?? null,
+    }))
+    .filter((s) => s.toSession);
 
-  // Session clusters -> procedural design parameters.
+  const sessions = deriveSessions(stitches);
+  const columnCount = placeColumns(sessions);
+
   const clusters = new Map();
   for (const s of stitches) {
     const key = s.session ?? `${s.actor}:anon`;
@@ -193,8 +271,6 @@ export function weaveSpec(events) {
       anchor: ss[0].id,
       warpIndex: ss[0].warpIndex,
       t: ss[0].t,
-      // Motif genome: density -> petal count, tool diversity -> symmetry order,
-      // error rate -> jaggedness, duration -> radius, correlations -> knot.
       genome: {
         petals: 3 + Math.round(density * 9),
         symmetry: 1 + tools,
@@ -206,7 +282,7 @@ export function weaveSpec(events) {
     };
   });
 
-  return { warp, stitches, sessions: deriveSessions(stitches), strands, handoffs, designs, span: { t0, t1 } };
+  return { warp, stitches, sessions, columnCount, strands, handoffs, designs, skipped, span: { t0, t1 } };
 }
 
 const HTML = readFileSync(new URL("./index.html", import.meta.url), "utf8");

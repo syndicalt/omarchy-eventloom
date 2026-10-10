@@ -9,22 +9,15 @@ LOG_DIR="$HOME/.local/state/omarchy/agents/logs"
 
 say() { printf '  %s\n' "$*"; }
 
-# --- claude hooks: remove only eventloom entries -----------------------------
-if [ -f "$HOME/.claude/settings.json" ] && command -v node >/dev/null 2>&1; then
-  node -e '
-    const fs = require("fs");
-    const p = process.env.HOME + "/.claude/settings.json";
-    const s = JSON.parse(fs.readFileSync(p, "utf8"));
-    for (const ev of Object.keys(s.hooks ?? {})) {
-      s.hooks[ev] = (s.hooks[ev] ?? []).filter((e) =>
-        !(e.hooks ?? []).some((h) => typeof h.command === "string" && h.command.includes("eventloom-hook.sh")));
-      if (!s.hooks[ev].length) delete s.hooks[ev];
-    }
-    fs.writeFileSync(p, JSON.stringify(s, null, 2) + "\n");
-  '
-  say "claude hooks stripped"
+# --- claude hooks: remove only eventloom commands, keep sibling hooks ---------
+if [ -x "$BIN_DIR/eventloom" ]; then
+  if "$BIN_DIR/eventloom" unwire-claude-hooks; then
+    say "claude hooks stripped"
+  else
+    say "claude settings left unchanged (could not parse)"
+  fi
 fi
-rm -f "$HOME/.claude/hooks/eventloom-hook.sh"
+rm -f "$HOME/.claude/hooks/eventloom-hook.sh" "$HOME/.claude/hooks/eventloom-hook.mjs"
 
 # --- files --------------------------------------------------------------------
 rm -f "$HOME/.omp/agent/extensions/eventloom.ts"

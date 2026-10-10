@@ -3,7 +3,7 @@
 // Installed beside the herdr extension; follows the same plugin interface.
 // @ts-nocheck
 
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 
 const HOME = process.env.HOME ?? "";
 const EVENTLOOM = `${HOME}/.local/bin/eventloom`;
@@ -16,9 +16,20 @@ function cwdOf(ctx) {
   return ctx?.cwd ?? ctx?.session?.cwd ?? process.cwd();
 }
 
-// Fire-and-forget: the agent path must never block on logging (consideration 6).
-function append(type, payload) {
-  execFile(EVENTLOOM, ["append", type, "--actor", "omp", "--payload", JSON.stringify(payload)], { timeout: 5000 }, () => {}).unref?.();
+function sessionIdOf(ctx) {
+  const id = ctx?.sessionId ?? ctx?.session?.id;
+  return id == null ? undefined : String(id);
+}
+
+// Detached so a session_shutdown append survives omp exiting. Spawn errors
+// are reported; the agent path itself never waits on the log.
+function append(type, payload, { thread, cwd } = {}) {
+  const args = ["append", type, "--actor", "omp", "--thread", thread, "--payload", JSON.stringify(payload)];
+  if (payload.correlation_id) args.push("--correlation", String(payload.correlation_id));
+  if (cwd) args.push("--cwd", String(cwd));
+  const child = spawn(EVENTLOOM, args, { detached: true, stdio: ["ignore", "ignore", "inherit"] });
+  child.on("error", (err) => console.error("eventloom:", err.message));
+  child.unref();
 }
 
 export default function (pi) {
@@ -27,104 +38,100 @@ export default function (pi) {
   let sessionKey = undefined;
   let correlationId = undefined;
 
-  function activate(ctx, reason) {
-    const cwd = cwdOf(ctx);
-    if (sessionKey === undefined) {
-      sessionKey = `${ctx?.sessionId ?? Date.now()}`;
-      correlationId = `omp-${sessionKey}`;
-      append("agent.session.started", {
-        session_id: sessionKey,
-        correlation_id: correlationId,
-        cwd,
-        reason: reason ?? "start",
-      });
-    } else {
-      append("agent.session.resumed", {
-        session_id: sessionKey,
-        correlation_id: correlationId,
-        cwd,
-        reason: reason ?? "resume",
-      });
-    }
+  function thread() {
+    return `omp-${sessionKey ?? "main"}`;
   }
 
-  pi.on("session_start", (_event, ctx) => activate(ctx, "start"));
-  pi.on("session_switch", (event, ctx) => activate(ctx, event?.reason ?? "switch"));
+  function openSession(ctx, reason, resumed) {
+    const incoming = sessionIdOf(ctx);
+    if (sessionKey !== undefined && (!incoming || incoming === sessionKey)) return;
+    sessionKey = incoming ?? `${Date.now()}`;
+    correlationId = `omp-${sessionKey}`;
+    append(resumed ? "agent.session.resumed" : "agent.session.started", {
+      session_id: sessionKey,
+      correlation_id: correlationId,
+      cwd: cwdOf(ctx),
+      reason,
+    }, { thread: thread(), cwd: cwdOf(ctx) });
+  }
+
+  function eventPayload(ctx, extra) {
+    return {
+      session_id: sessionKey,
+      correlation_id: correlationId,
+      cwd: cwdOf(ctx),
+      ...extra,
+    };
+  }
+
+  pi.on("session_start", (_event, ctx) => openSession(ctx, "start", false));
+
+  pi.on("session_switch", (event, ctx) => {
+    const incoming = sessionIdOf(ctx);
+    if (incoming && incoming === sessionKey) return;
+    sessionKey = undefined;
+    openSession(ctx, event?.reason ?? "switch", true);
+  });
 
   pi.on("agent_start", (_event, ctx) => {
-    activate(ctx, "agent_start");
+    // A turn is not a session boundary. Open lazily only if nothing has started.
+    openSession(ctx, "agent_start", false);
     const model = ctx?.model ?? ctx?.session?.model;
     if (model) {
-      append("agent.model.started", {
-        session_id: sessionKey,
-        correlation_id: correlationId,
-        model,
-      });
+      append("agent.model.started", eventPayload(ctx, { model }), { thread: thread(), cwd: cwdOf(ctx) });
     }
   });
 
   pi.on("tool_execution_start", (event, ctx) => {
-    activate(ctx, "tool");
-    append("agent.tool.started", {
-      session_id: sessionKey,
-      correlation_id: correlationId,
+    openSession(ctx, "tool", false);
+    append("agent.tool.started", eventPayload(ctx, {
       tool: event?.toolName,
-      args_summary: typeof event?.args === "object" ? Object.keys(event?.args ?? {}) : undefined,
-    });
+      args_summary: typeof event?.args === "object" && event?.args ? Object.keys(event.args) : undefined,
+    }), { thread: thread(), cwd: cwdOf(ctx) });
   });
 
   pi.on("tool_execution_end", (event, ctx) => {
-    activate(ctx, "tool");
+    openSession(ctx, "tool", false);
     const failed = event?.isError ?? event?.error != null;
-    append(failed ? "agent.tool.failed" : "agent.tool.completed", {
-      session_id: sessionKey,
-      correlation_id: correlationId,
+    append(failed ? "agent.tool.failed" : "agent.tool.completed", eventPayload(ctx, {
       tool: event?.toolName,
       exit_code: event?.exitCode,
       duration_ms: event?.durationMs,
-    });
+    }), { thread: thread(), cwd: cwdOf(ctx) });
   });
 
   pi.on("tool_approval_requested", (event, ctx) => {
-    activate(ctx, "approval");
-    append("agent.approval.requested", {
-      session_id: sessionKey,
-      correlation_id: correlationId,
+    openSession(ctx, "approval", false);
+    append("agent.approval.requested", eventPayload(ctx, {
       tool: event?.toolName,
       reason: event?.reason,
-    });
+    }), { thread: thread(), cwd: cwdOf(ctx) });
   });
 
   pi.on("tool_approval_resolved", (event, ctx) => {
-    activate(ctx, "approval");
-    append("agent.approval.resolved", {
-      session_id: sessionKey,
-      correlation_id: correlationId,
+    openSession(ctx, "approval", false);
+    append("agent.approval.resolved", eventPayload(ctx, {
       tool: event?.toolName,
       decision: event?.decision ?? event?.approved,
-    });
+    }), { thread: thread(), cwd: cwdOf(ctx) });
   });
 
-  pi.on("agent_end", (event) => {
-    const failed = event?.isError ?? event?.error != null;
-    append(failed ? "agent.session.failed" : "agent.session.completed", {
-      session_id: sessionKey,
-      correlation_id: correlationId,
-      duration_ms: event?.durationMs,
-    });
+  pi.on("agent_end", (event, ctx) => {
+    // The turn ended. The session stays open until session_shutdown.
+    const model = ctx?.model ?? ctx?.session?.model ?? event?.model;
+    if (model || event?.durationMs != null) {
+      append("agent.model.completed", eventPayload(ctx, {
+        model,
+        duration_ms: event?.durationMs,
+        failed: Boolean(event?.isError ?? event?.error != null),
+      }), { thread: thread(), cwd: cwdOf(ctx) });
+    }
+  });
+
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (sessionKey === undefined) return;
+    append("agent.session.completed", eventPayload(ctx, { reason: "shutdown" }), { thread: thread(), cwd: cwdOf(ctx) });
     sessionKey = undefined;
     correlationId = undefined;
-  });
-
-  pi.on("session_shutdown", () => {
-    if (sessionKey !== undefined) {
-      append("agent.session.completed", {
-        session_id: sessionKey,
-        correlation_id: correlationId,
-        reason: "shutdown",
-      });
-      sessionKey = undefined;
-      correlationId = undefined;
-    }
   });
 }

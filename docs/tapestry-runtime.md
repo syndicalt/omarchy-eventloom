@@ -61,4 +61,7 @@ ids, and the session inspector remains backed by the sealed records.
       completion, failure, resumeOf, column, seed }
 
 These fields are disposable. Deterministic placement and seeded material
-variation mean the same shard rebuilds to the same tapestry.
+variation mean the same shard rebuilds to the same tapestry. Columns are
+packed: overlapping segments do not share one. `resumeOf` is set only for
+`agent.session.resumed`. Events with no usable timestamp are listed in
+`skipped` and do not move the time domain.

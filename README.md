@@ -25,16 +25,17 @@ git clone <this repo> ~/Projects/omarchy-eventloom
 ~/Projects/omarchy-eventloom/install.sh
 ```
 
-Requirements: `bun` **or** `node >= 20` (bun preferred — it needs no
-`npm install`; the runtime resolves from bun's global cache automatically).
+Requirements: `bun` or `node >= 20`, plus `npm` (the installer pins
+`@eventloom/runtime@1.0.0` under `~/.local/lib/eventloom` so bun and node seal
+with the same build).
 
 ## Usage
 
 ```sh
 eventloom append agent.note.added --actor omp --payload '{"text":"hello"}'
 eventloom tail --limit 20 --actor omp
-eventloom verify        # hash-chain integrity; exit 2 on tamper
-eventloom inspect       # adapter install status
+eventloom verify        # every daily shard; exit 2 on tamper
+eventloom inspect       # adapter file present and actually wired
 eventloom path          # today's shard path
 ```
 
@@ -71,12 +72,16 @@ contract — no proxies.
 
 ## Privacy
 
-- Redaction before sealing (the chain is irreversible): API keys, tokens,
-  JWTs, PEM blocks, Slack/GitHub tokens.
-- `EVENTLOOM_MODE=full` (default) | `summary` (200-char excerpts) |
-  `metadata` (structure only, no content).
+- Redaction before sealing (the chain is irreversible). Recursive over nested
+  values: assignment-shaped secrets (`access_token`, `client_secret`,
+  `authorization: Bearer …`), PEM blocks, JWTs, and common GitHub, Slack,
+  AWS, Google, npm, and `sk-`/`pk-` tokens. URL userinfo is stripped.
+- `EVENTLOOM_MODE=full` (default) | `summary` (every string clipped to 200
+  chars, including nested ones) | `metadata` (structure only, no content).
 - `EVENTLOOM_DISABLE=1` opts any agent out.
+- Shards are mode `0600` and the log directory is `0700`.
 - Local-only by default. Logs are user-owned; `rm` the shard to purge.
+  Shard names use the local calendar date, not UTC.
 
 ## Visualization
 
@@ -100,7 +105,7 @@ leaves every other hook (herdr, etc.) untouched.
 
 ## Status
 
-Prototype. Verified: concurrent multi-writer chain safety, tamper detection,
-redaction, capture modes, omp wire format (simulated), claude hook invocation.
-Not yet: grok/codex/opencode adapters, Quickshell panel view, provenance
-autowiring into adapter payloads.
+Prototype. `node --test` covers redaction, Claude settings edits, the tapestry
+projection, and the Claude hook's failure mapping. Runtime chain locking and
+tamper detection come from `@eventloom/runtime@1.0.0`.
+Not yet: grok/codex/opencode adapters, Quickshell panel view.
