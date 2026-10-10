@@ -331,18 +331,6 @@ function drawUpright(session, frame) {
   ctx.stroke();
 
   drawCap(session, p, color);
-  if (Math.abs(p.y0 - p.y1) > 72) {
-    ctx.save();
-    ctx.translate(p.x, (p.y0 + p.y1) / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.font = "13px Palatino, Georgia, serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(255, 247, 232, 0.92)";
-    ctx.shadowColor = "rgba(40, 22, 10, 0.45)";
-    ctx.shadowBlur = 3;
-    ctx.fillText(session.actor, 0, 4);
-    ctx.restore();
-  }
   state.layout.push({ s: session, p, widths, width: Math.max(...widths) });
 }
 
@@ -438,11 +426,43 @@ function drawHandoff(handoff) {
   ctx.restore();
 }
 
+function drawNameplates() {
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const row of state.layout) {
+    const actor = String(row.s.actor);
+    const sid = String(row.s.sessionId);
+    ctx.font = "600 15px Palatino, Georgia, serif";
+    const actorW = ctx.measureText(actor).width;
+    ctx.font = "13px Palatino, Georgia, serif";
+    const sidW = ctx.measureText(sid).width;
+    const w = Math.ceil(Math.max(actorW, sidW) + 18);
+    const h = 38;
+    const x = row.p.x - w / 2;
+    const y = (row.p.y0 + row.p.y1) / 2 - h / 2;
+    ctx.fillStyle = "rgba(255, 248, 236, 0.96)";
+    ctx.strokeStyle = "#5c432c";
+    ctx.lineWidth = 1;
+    roundRect(x, y, w, h, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#24180e";
+    ctx.font = "600 15px Palatino, Georgia, serif";
+    ctx.fillText(actor, row.p.x, y + 13);
+    ctx.fillStyle = "#5c4634";
+    ctx.font = "13px Palatino, Georgia, serif";
+    ctx.fillText(sid, row.p.x, y + 28);
+  }
+  ctx.restore();
+}
+
 function drawRuler(frame) {
   const { lo, hi } = state.domain;
   const multi = hi - lo > 36 * 60 * 60 * 1000;
-  ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, monospace";
   ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
   for (let i = 0; i <= 5; i++) {
     const t = lo + ((hi - lo) * i) / 5;
     const y = frame.top + frame.height - (i / 5) * frame.height * state.scale + state.panY;
@@ -457,19 +477,20 @@ function drawRuler(frame) {
     const label = multi
       ? when.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
       : when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    ctx.fillStyle = "#cbbba4";
-    ctx.fillText(label, frame.left - 34, y + 3);
+    ctx.fillStyle = "#f6ecdc";
+    ctx.fillText(label, frame.left - 36, y);
   }
 }
 
 function drawKey(rect) {
   const actors = state.spec?.warp || [];
   if (!actors.length) return;
-  ctx.font = "14px Palatino, Georgia, serif";
+  ctx.font = "16px Palatino, Georgia, serif";
   ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
   const y = rect.y + rect.h + 22;
   actors.forEach((actor, i) => {
-    const x = rect.x + 8 + i * 124;
+    const x = rect.x + 8 + i * 148;
     const color = dye(actor.actor);
     ctx.strokeStyle = color;
     ctx.lineWidth = 5;
@@ -478,8 +499,8 @@ function drawKey(rect) {
     ctx.moveTo(x, y);
     ctx.bezierCurveTo(x + 8, y - 3, x + 16, y + 3, x + 28, y);
     ctx.stroke();
-    ctx.fillStyle = "#eadcc4";
-    ctx.fillText(actor.actor, x + 36, y + 5);
+    ctx.fillStyle = "#f8f1e4";
+    ctx.fillText(actor.actor, x + 38, y);
   });
 }
 
@@ -501,6 +522,7 @@ function draw() {
   }
   for (const handoff of state.spec?.handoffs || []) drawHandoff(handoff);
   drawWarp(rect);
+  drawNameplates();
   drawRuler(frame);
   drawKey(rect);
 }
