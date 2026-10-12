@@ -1,0 +1,24 @@
+{
+  "name": "omarchy-eventloom",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Universal append-only agent event log for Omarchy",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test",
+    "lint": "eslint . && tsc -p extensions",
+    "check": "npm run lint && npm test"
+  },
+  "dependencies": {
+    "@eventloom/runtime": "1.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^10.0.0",
+    "globals": "^17.0.0",
+    "typescript": "^5.7.0"
+  }
+}

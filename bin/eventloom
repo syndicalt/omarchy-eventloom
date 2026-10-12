@@ -1,22 +1,27 @@
 #!/bin/sh
-# eventloom launcher — bun and node both load the pinned runtime installed
-# next to the shim. Neither falls through to a global cache.
-set -e
-
+# eventloom launcher. bun and node both load the pinned runtime installed
+# under $LIB_DIR; neither falls back to a global cache.
 LIB_DIR="$HOME/.local/lib/eventloom"
+ENTRY="$LIB_DIR/lib/eventloom.mjs"
+LOG_DIR="${EVENTLOOM_LOG_DIR:-$HOME/.local/state/omarchy/agents/logs}"
 
-if [ ! -d "$LIB_DIR/node_modules/@eventloom/runtime" ]; then
-  echo "eventloom: runtime not installed; run install.sh" >&2
+# Adapters run this with its output discarded, so a launcher that cannot
+# start also leaves a line where `eventloom doctor` will find it.
+die() {
+  echo "eventloom: $1" >&2
+  errors="$(dirname "$LOG_DIR")/eventloom-errors.log"
+  umask 077
+  mkdir -p "$(dirname "$errors")" 2>/dev/null \
+    && printf '%s\tlauncher\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$1" >>"$errors" 2>/dev/null
   exit 1
-fi
+}
 
+[ -f "$ENTRY" ] || die "$ENTRY is missing; run install.sh"
+[ -d "$LIB_DIR/node_modules/@eventloom/runtime" ] || die "runtime not installed; run install.sh"
 if command -v bun >/dev/null 2>&1; then
-  exec bun "$LIB_DIR/eventloom.mjs" "$@"
+  exec bun "$ENTRY" "$@"
 fi
-
 if command -v node >/dev/null 2>&1; then
-  exec node "$LIB_DIR/eventloom.mjs" "$@"
+  exec node "$ENTRY" "$@"
 fi
-
-echo "eventloom: requires bun or node (neither found)" >&2
-exit 1
+die "neither bun nor node is on PATH ($PATH)"

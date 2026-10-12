@@ -1,20 +1,29 @@
 #!/bin/sh
-# eventloom claude adapter — reads hook JSON from stdin, appends to the universal agent log.
-# Opt-out: EVENTLOOM_DISABLE=1. Missing runtime is reported on stderr and does not fail Claude.
-set -eu
-
-event="${1:-}"
-[ -n "$event" ] || exit 0
+# eventloom adapter for Claude Code. Registered for SessionStart, SessionEnd,
+# PostToolUse and PostToolUseFailure; Claude passes the hook input on stdin.
+#
+# Runs in the foreground, so the event is sealed before the hook returns.
+# Nothing is printed: a hook's output can surface in the session.
 [ "${EVENTLOOM_DISABLE:-0}" = "1" ] && exit 0
+eventloom="$HOME/.local/bin/eventloom"
+[ -x "$eventloom" ] || exit 0
 
-hook_dir="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
-if command -v node >/dev/null 2>&1; then
-  runtime=node
-elif command -v bun >/dev/null 2>&1; then
-  runtime=bun
-else
-  echo "eventloom: hook skipped, node or bun is required" >&2
-  exit 0
-fi
+# A stack trace opens with a source location and the offending line; the line
+# that starts with the error's name is the useful one. Failing that, the last.
+crash_summary() {
+  printf '%s\n' "$failure" | sed -n '/^[A-Za-z]*Error/{p;q;}' | grep . || printf '%s\n' "$failure" | tail -n 1
+}
 
-exec "$runtime" "$hook_dir/eventloom-hook.mjs" "$event"
+failure="$("$eventloom" claude-hook 2>&1 >/dev/null)" && exit 0
+case "$failure" in
+  eventloom:*) ;; # eventloom recorded this failure itself
+  *)
+    # a crash before eventloom could report anything, e.g. a broken install
+    log_dir="${EVENTLOOM_LOG_DIR:-$HOME/.local/state/omarchy/agents/logs}"
+    errors="$(dirname "$log_dir")/eventloom-errors.log"
+    umask 077
+    mkdir -p "$(dirname "$errors")" 2>/dev/null && printf '%s\tclaude-hook\tcrashed: %s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" "$(crash_summary)" >>"$errors" 2>/dev/null
+    ;;
+esac
+exit 0

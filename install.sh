@@ -1,6 +1,5 @@
 #!/bin/sh
-# omarchy-eventloom installer — zero-touch, idempotent.
-# Copies sources out of this repo, wires adapters, verifies the result.
+# omarchy-eventloom installer. Idempotent: run it again to upgrade.
 set -eu
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -9,69 +8,77 @@ BIN_DIR="$HOME/.local/bin"
 LOG_DIR="$HOME/.local/state/omarchy/agents/logs"
 
 say() { printf '  %s\n' "$*"; }
+die() { echo "install: $*" >&2; exit 1; }
 
-# --- 1. runtime: bun preferred (no npm step), node >= 20 fallback ------------
-RUNTIME=""
-if command -v bun >/dev/null 2>&1; then
-  RUNTIME="bun"
-elif command -v node >/dev/null 2>&1; then
+[ "$#" -eq 0 ] || die "usage: install.sh (takes no arguments)"
+
+# --- 1. runtime -------------------------------------------------------------
+if command -v node >/dev/null 2>&1; then
   NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-  [ "$NODE_MAJOR" -ge 20 ] || { echo "node >= 20 required (found $NODE_MAJOR). Install bun: https://bun.sh" >&2; exit 1; }
-  RUNTIME="node"
-else
-  echo "Neither bun nor node found. Install bun: https://bun.sh (or: sudo pacman -S bun)" >&2
-  exit 1
+  [ "$NODE_MAJOR" -ge 20 ] || command -v bun >/dev/null 2>&1 || die "node >= 20 or bun is required (found node $NODE_MAJOR)"
+elif ! command -v bun >/dev/null 2>&1; then
+  die "bun or node >= 20 is required (https://bun.sh, or: sudo pacman -S nodejs npm)"
 fi
-say "runtime: $RUNTIME"
 
-# --- 2. files ----------------------------------------------------------------
-mkdir -p "$LIB_DIR" "$BIN_DIR" "$LOG_DIR"
-cp "$REPO_DIR/lib/engine.mjs" "$REPO_DIR/lib/eventloom.mjs" "$REPO_DIR/lib/claude-settings.mjs" "$REPO_DIR/lib/adapters.json" "$LIB_DIR/"
-mkdir -p "$LIB_DIR/../tapestry"
-cp "$REPO_DIR/tapestry/server.mjs" "$REPO_DIR/tapestry/index.html" "$REPO_DIR/tapestry/weave.js" "$LIB_DIR/../tapestry/"
-cp "$REPO_DIR/bin/eventloom" "$REPO_DIR/bin/omarchy-eventloom" "$REPO_DIR/bin/omarchy-eventloom-inspect" "$BIN_DIR/"
-chmod +x "$BIN_DIR/eventloom" "$BIN_DIR/omarchy-eventloom" "$BIN_DIR/omarchy-eventloom-inspect"
+# --- 2. dependencies, exactly as locked ----------------------------------------
+# Installed into a staging directory and swapped in only on success, so a
+# failed download during an upgrade leaves the working install untouched.
+STAGE="$LIB_DIR/.staging"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cp "$REPO_DIR/package.json" "$REPO_DIR/package-lock.json" "$STAGE/"
+if command -v npm >/dev/null 2>&1; then
+  npm ci --prefix "$STAGE" --omit=dev --no-fund --no-audit --loglevel=error \
+    || die "npm could not install @eventloom/runtime; the existing install is unchanged"
+elif command -v bun >/dev/null 2>&1; then
+  # bun reads package-lock.json and installs the versions it pins
+  (cd "$STAGE" && bun install --production) \
+    || die "bun could not install @eventloom/runtime; the existing install is unchanged"
+else
+  die "npm or bun is required to install @eventloom/runtime"
+fi
+[ -d "$STAGE/node_modules/@eventloom/runtime" ] || die "@eventloom/runtime is missing after install"
+
+# --- 3. files: $LIB_DIR mirrors the repository layout ------------------------
+mkdir -p "$LIB_DIR/lib" "$LIB_DIR/tapestry" "$BIN_DIR" "$LOG_DIR"
+chmod 700 "$LOG_DIR"
+find "$LOG_DIR" -name '*.jsonl' -exec chmod 600 {} +
+rm -rf "$LIB_DIR/node_modules"
+mv "$STAGE/node_modules" "$STAGE/package.json" "$STAGE/package-lock.json" "$LIB_DIR/"
+rm -rf "$STAGE"
+cp "$REPO_DIR"/lib/*.mjs "$REPO_DIR/lib/adapters.json" "$LIB_DIR/lib/"
+cp -R "$REPO_DIR/tapestry/." "$LIB_DIR/tapestry/"
+for name in eventloom omarchy-eventloom omarchy-eventloom-inspect; do
+  cp "$REPO_DIR/bin/$name" "$BIN_DIR/$name"
+  chmod +x "$BIN_DIR/$name"
+done
+# Releases before 0.2.0 kept their modules flat and the tapestry outside $LIB_DIR.
+rm -f "$LIB_DIR/eventloom.mjs" "$LIB_DIR/engine.mjs" "$LIB_DIR/claude-settings.mjs" "$LIB_DIR/adapters.json"
+rm -rf "$HOME/.local/lib/tapestry"
 say "installed cli -> $BIN_DIR/eventloom"
 
-# --- 3. one pinned runtime for bun and node -----------------------------------
-# Both launchers resolve @eventloom/runtime from this prefix, so a desktop bun
-# and a terminal node cannot seal with different versions.
-RUNTIME_VERSION="1.0.0"
-read_runtime_version() {
-  pkg="$LIB_DIR/node_modules/@eventloom/runtime/package.json"
-  if command -v node >/dev/null 2>&1; then
-    node -e "try{console.log(require('$pkg').version)}catch{console.log('')}" 2>/dev/null || true
-  elif command -v bun >/dev/null 2>&1; then
-    bun -e "try{console.log(require('$pkg').version)}catch{console.log('')}" 2>/dev/null || true
-  fi
-}
-installed="$(read_runtime_version)"
-if [ "$installed" != "$RUNTIME_VERSION" ]; then
-  say "installing @eventloom/runtime@$RUNTIME_VERSION"
-  npm install --prefix "$LIB_DIR" --no-fund --no-audit --silent "@eventloom/runtime@$RUNTIME_VERSION"
-fi
-
-# --- 4. omp adapter: only when omp is present --------------------------------
-if [ -d "$HOME/.omp/agent" ] || command -v omp >/dev/null 2>&1; then
+# --- 4. omp adapter, when omp is present --------------------------------------
+if [ -d "$HOME/.omp/agent" ]; then
   mkdir -p "$HOME/.omp/agent/extensions"
   cp "$REPO_DIR/extensions/eventloom.ts" "$HOME/.omp/agent/extensions/"
-  say "omp adapter installed (loads on next omp session)"
+  say "omp adapter installed (loads on the next omp session)"
 fi
 
-# --- 5. claude adapter: idempotent settings merge ----------------------------
-HOOK="$HOME/.claude/hooks/eventloom-hook.sh"
-if [ -d "$HOME/.claude" ] || command -v claude >/dev/null 2>&1; then
+# --- 5. claude adapter, when Claude Code is present ---------------------------
+if [ -d "$HOME/.claude" ]; then
   mkdir -p "$HOME/.claude/hooks"
-  cp "$REPO_DIR/hooks/eventloom-hook.sh" "$REPO_DIR/hooks/eventloom-hook.mjs" "$HOME/.claude/hooks/"
-  chmod +x "$HOOK"
-  "$HOME/.local/bin/eventloom" wire-claude-hooks "$HOOK"
-  say "claude adapter wired (SessionStart/Stop/PostToolUse)"
+  cp "$REPO_DIR/hooks/eventloom-hook.sh" "$HOME/.claude/hooks/"
+  chmod +x "$HOME/.claude/hooks/eventloom-hook.sh"
+  rm -f "$HOME/.claude/hooks/eventloom-hook.mjs"
+  "$BIN_DIR/eventloom" wire-claude-hooks >/dev/null \
+    || die "could not register the Claude hooks; fix ~/.claude/settings.json as described above and re-run"
+  say "claude adapter registered in ~/.claude/settings.json"
 fi
 
-# --- 6. acceptance gate ------------------------------------------------------
-if ! "$HOME/.local/bin/eventloom" verify; then
-  echo "eventloom: verify failed; install aborted" >&2
-  exit 1
-fi
-"$HOME/.local/bin/eventloom" inspect
+# --- 6. the install is done when doctor says the log works --------------------
+"$BIN_DIR/eventloom" doctor || die "doctor reported a failure above; the install is incomplete"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) say "note: $BIN_DIR is not on PATH" ;;
+esac
 say "install complete."

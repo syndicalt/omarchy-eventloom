@@ -1,0 +1,40 @@
+{
+  "SessionStart": {
+    "session_id": "0b9a2c1e-5d1f-4c0e-9a44-0f6f5a3a7d10",
+    "transcript_path": "/home/me/.claude/projects/-work/0b9a2c1e.jsonl",
+    "cwd": "/work",
+    "hook_event_name": "SessionStart",
+    "source": "startup"
+  },
+  "SessionEnd": {
+    "session_id": "0b9a2c1e-5d1f-4c0e-9a44-0f6f5a3a7d10",
+    "transcript_path": "/home/me/.claude/projects/-work/0b9a2c1e.jsonl",
+    "cwd": "/work",
+    "hook_event_name": "SessionEnd",
+    "reason": "prompt_input_exit"
+  },
+  "PostToolUse": {
+    "session_id": "0b9a2c1e-5d1f-4c0e-9a44-0f6f5a3a7d10",
+    "transcript_path": "/home/me/.claude/projects/-work/0b9a2c1e.jsonl",
+    "cwd": "/work",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Bash",
+    "tool_input": { "command": "cat ~/.netrc", "description": "Show credentials" },
+    "tool_response": { "stdout": "machine example.com password hunter2", "stderr": "" }
+  },
+  "PostToolUseFailure": {
+    "session_id": "0b9a2c1e-5d1f-4c0e-9a44-0f6f5a3a7d10",
+    "transcript_path": "/home/me/.claude/projects/-work/0b9a2c1e.jsonl",
+    "cwd": "/work",
+    "hook_event_name": "PostToolUseFailure",
+    "tool_name": "Read",
+    "tool_input": { "file_path": "/nope" },
+    "error": "File does not exist."
+  },
+  "Stop": {
+    "session_id": "0b9a2c1e-5d1f-4c0e-9a44-0f6f5a3a7d10",
+    "cwd": "/work",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false
+  }
+}

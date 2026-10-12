@@ -1,53 +1,136 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
-import { claudeHooksWired, hookCommand, mergeClaudeHooks, parseSettingsText, stripClaudeHooks } from "../lib/claude-settings.mjs";
+import { CLAUDE_HOOK_EVENTS } from "../lib/claude-hook.mjs";
+import { tempDir } from "./helpers.mjs";
+import {
+  hookCommand, missingClaudeHooks, readSettingsFile, unwireClaudeHooks, wireClaudeHooks, writeSettingsFile,
+} from "../lib/claude-settings.mjs";
 
-const hook = "/home/o'brien/.claude/hooks/eventloom-hook.sh";
+const HOOK = "/home/o'brien/.claude/hooks/eventloom-hook.sh";
+const tempFile = (t) => path.join(tempDir(t, "settings"), "settings.json");
 
-test("merge quotes hook paths and does not clobber a sibling command", () => {
-  const settings = {
-    model: "opus",
+test("wiring registers every hook event and keeps the rest of the file", () => {
+  const settings = { model: "opus", permissions: { deny: ["Read(.env)"] } };
+  const wired = wireClaudeHooks(settings, HOOK);
+  assert.deepEqual(Object.keys(wired.hooks), CLAUDE_HOOK_EVENTS);
+  assert.equal(wired.model, "opus");
+  assert.deepEqual(wired.permissions, { deny: ["Read(.env)"] });
+  assert.deepEqual(missingClaudeHooks(wired, HOOK), []);
+  assert.deepEqual(settings, { model: "opus", permissions: { deny: ["Read(.env)"] } }, "input is not mutated");
+});
+
+test("the hook path is shell-quoted", () => {
+  assert.equal(hookCommand(HOOK), "sh '/home/o'\\''brien/.claude/hooks/eventloom-hook.sh'");
+});
+
+test("wiring twice changes nothing, and a new path replaces the old one", () => {
+  const once = wireClaudeHooks({}, HOOK);
+  assert.deepEqual(wireClaudeHooks(once, HOOK), once);
+  const moved = wireClaudeHooks(once, "/new/eventloom-hook.sh");
+  assert.equal(moved.hooks.PostToolUse.length, 1);
+  assert.equal(moved.hooks.PostToolUse[0].hooks[0].command, "sh '/new/eventloom-hook.sh'");
+});
+
+test("entries from older releases are migrated; sibling hooks survive in place", () => {
+  const legacy = {
     hooks: {
-      SessionStart: [{
+      Stop: [{ matcher: "*", hooks: [{ type: "command", command: "bash '/old/eventloom-hook.sh' session_stop" }] }],
+      PostToolUse: [{
         matcher: "*",
         hooks: [
-          { type: "command", command: "herdr start", timeout: 5 },
-          { type: "command", command: "bash '/old/eventloom-hook.sh' session_start", timeout: 10 },
+          { type: "command", command: "audit-hook --strict" },
+          { type: "command", command: "bash '/old/eventloom-hook.sh' post_tool" },
         ],
       }],
     },
   };
-  const merged = mergeClaudeHooks(settings, hook);
-  assert.equal(merged.settings.model, "opus");
-  const commands = merged.settings.hooks.SessionStart[0].hooks.map((entry) => entry.command);
-  assert.deepEqual(commands[0], "herdr start");
-  assert.equal(commands[1], hookCommand(hook, "session_start"));
-  assert.equal(hookCommand(hook, "session_start"), "bash '/home/o'\\''brien/.claude/hooks/eventloom-hook.sh' session_start");
-  assert.equal(merged.added, 2);
-  assert.equal(merged.refreshed, 1);
-  assert.equal(claudeHooksWired(merged.settings).wired, true);
+  const wired = wireClaudeHooks(legacy, HOOK);
+  assert.equal(wired.hooks.Stop, undefined, "Stop is no longer an eventloom hook");
+  assert.deepEqual(wired.hooks.PostToolUse[0], { matcher: "*", hooks: [{ type: "command", command: "audit-hook --strict" }] });
+  assert.equal(wired.hooks.PostToolUse[1].hooks[0].command, hookCommand(HOOK));
 });
 
-test("re-merge refreshes in place instead of duplicating", () => {
-  const once = mergeClaudeHooks({}, hook);
-  const twice = mergeClaudeHooks(once.settings, "/new/eventloom-hook.sh");
-  assert.equal(twice.added, 0);
-  assert.equal(twice.refreshed, 3);
-  assert.equal(twice.settings.hooks.PostToolUse.length, 1);
+test("unwiring removes only eventloom commands", () => {
+  const original = { hooks: { Stop: [{ hooks: [{ type: "command", command: "herdr stop" }] }] } };
+  const { settings, removed } = unwireClaudeHooks(wireClaudeHooks(original, HOOK));
+  assert.deepEqual(settings, original);
+  assert.equal(removed, CLAUDE_HOOK_EVENTS.length);
+  assert.deepEqual(unwireClaudeHooks(wireClaudeHooks({ model: "opus" }, HOOK)).settings, { model: "opus" });
+  assert.deepEqual(missingClaudeHooks(settings, HOOK), CLAUDE_HOOK_EVENTS);
 });
 
-test("strip removes only eventloom commands", () => {
-  const merged = mergeClaudeHooks({
-    hooks: { Stop: [{ matcher: "*", hooks: [{ type: "command", command: "herdr stop" }] }] },
-  }, hook);
-  merged.settings.hooks.Stop[0].hooks.push({ type: "command", command: hookCommand(hook, "session_stop") });
-  const stripped = stripClaudeHooks(merged.settings);
-  assert.deepEqual(stripped.settings.hooks.Stop, [{ matcher: "*", hooks: [{ type: "command", command: "herdr stop" }] }]);
-  assert.equal(stripped.settings.hooks.SessionStart, undefined);
-  assert.ok(stripped.removed >= 3);
+test("a hook registered for another path, or for only some tools, counts as missing", () => {
+  const elsewhere = wireClaudeHooks({}, "/gone/eventloom-hook.sh");
+  assert.deepEqual(missingClaudeHooks(elsewhere, HOOK), CLAUDE_HOOK_EVENTS);
+
+  const narrowed = wireClaudeHooks({}, HOOK);
+  narrowed.hooks.PostToolUse[0].matcher = "Write";
+  assert.deepEqual(missingClaudeHooks(narrowed, HOOK), ["PostToolUse"]);
 });
 
-test("invalid settings text is refused instead of replaced", () => {
-  assert.throws(() => parseSettingsText("{", "/tmp/settings.json"), /refusing to rewrite/);
-  assert.throws(() => parseSettingsText("[]", "/tmp/settings.json"), /root is not an object/);
+test("a user's own hook that mentions the script, and entries they left empty, are not ours to remove", () => {
+  const theirs = {
+    hooks: {
+      Stop: [],
+      PostToolUse: [
+        { matcher: "Bash", hooks: [] },
+        { hooks: [{ type: "command", command: "sh ~/.claude/hooks/eventloom-hook.sh; notify-send done" }] },
+        { hooks: [{ type: "command", command: "~/bin/backup-eventloom-hook.sh.d/run" }] },
+      ],
+    },
+  };
+  assert.deepEqual(unwireClaudeHooks(theirs), { settings: theirs, removed: 0 });
+  assert.deepEqual(unwireClaudeHooks(wireClaudeHooks(theirs, HOOK)).settings, theirs);
+});
+
+test("a hooks table that is not Claude's shape is refused with a message, not guessed at", () => {
+  for (const hooks of ["x", ["x"], { SessionStart: {} }, { SessionStart: "x" }]) {
+    assert.throws(() => wireClaudeHooks({ hooks }, HOOK), /in Claude settings is not .*left unchanged/);
+    assert.throws(() => missingClaudeHooks({ hooks }), /left unchanged/);
+  }
+});
+
+test("a settings file that cannot be parsed is an error", (t) => {
+  const file = tempFile(t);
+  writeFileSync(file, '{\n  // my settings\n  "model": "opus",\n}\n');
+  assert.throws(() => readSettingsFile(file), /not valid JSON.*left unchanged/);
+  writeFileSync(file, "[]");
+  assert.throws(() => readSettingsFile(file), /does not hold a JSON object/);
+  assert.deepEqual(readSettingsFile(path.join(path.dirname(file), "absent.json")), {});
+});
+
+test("writes keep a backup and the exact file mode, and skip when nothing changed", (t) => {
+  const file = tempFile(t);
+  writeFileSync(file, '{"model":"opus"}', { mode: 0o644 });
+  const umask = process.umask(0o077);
+  t.after(() => process.umask(umask));
+  assert.equal(writeSettingsFile(file, { model: "sonnet" }), true);
+  assert.equal(readFileSync(`${file}.eventloom-backup`, "utf8"), '{"model":"opus"}');
+  assert.equal(statSync(file).mode & 0o777, 0o644, "the umask must not narrow an existing file's mode");
+  assert.deepEqual(readSettingsFile(file), { model: "sonnet" });
+  assert.equal(writeSettingsFile(file, { model: "sonnet" }), false);
+});
+
+test("a symlinked settings file is written through, not replaced", (t) => {
+  const file = tempFile(t);
+  const dotfiles = path.join(path.dirname(file), "dotfiles");
+  mkdirSync(dotfiles);
+  const real = path.join(dotfiles, "claude-settings.json");
+  writeFileSync(real, '{"model":"opus"}');
+  symlinkSync(real, file);
+  writeSettingsFile(file, { model: "sonnet" });
+  assert.equal(readlinkSync(file), real);
+  assert.deepEqual(JSON.parse(readFileSync(real, "utf8")), { model: "sonnet" });
+});
+
+test("a symlink whose target does not exist yet is written through too", (t) => {
+  const file = tempFile(t);
+  const real = path.join(path.dirname(file), "not-yet", "settings.json");
+  symlinkSync(real, file);
+  assert.equal(writeSettingsFile(file, { model: "opus" }), true);
+  assert.equal(readlinkSync(file), real);
+  assert.deepEqual(JSON.parse(readFileSync(real, "utf8")), { model: "opus" });
+  assert.equal(existsSync(`${file}.eventloom-backup`), false);
 });
