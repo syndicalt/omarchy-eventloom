@@ -31,6 +31,21 @@ test("the service runs the scripts that exist, and they are executable", () => {
   }
 });
 
+// Notifications are sent as a command's arguments, which every user of the
+// machine can read, so nothing a script or the doctor printed may reach one.
+test("notifications say a verdict, never what a command printed", () => {
+  const service = readFileSync(path.join(REPO, manifest.entryPoints.service), "utf8");
+  const sent = [...service.matchAll(/service\.notify\(([^]*?)(?:, "(?:low|normal|critical)")?\)\n/g)].map((match) => match[1]);
+  assert.equal(sent.length, 3);
+  for (const message of sent) {
+    const outsideQuotes = message.replace(/"[^"]*"/g, "");
+    const names = outsideQuotes.match(/[A-Za-z_][\w.]*/g) ?? [];
+    assert.deepEqual(names.filter((name) => !["service.pluginDir", "problems.length"].includes(name)), [], message);
+  }
+  // and nothing else in the service starts a process with captured output
+  assert.doesNotMatch(service.replace(/^\s*\/\/.*$/gm, ""), /(?:execDetached|command\s*=)[^\n]*(?:\.text|detail)/);
+});
+
 // A fresh clone is what Omarchy validates, so only what git would ship is
 // copied: a development checkout's node_modules holds symlinks, which the
 // validator refuses.
