@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { deriveLinks, demoEvents, launchUrl, main, requestedDays, weaveSpec } from "../tapestry/server.mjs";
+import { deriveLinks, demoEvents, launchPagePath, launchUrl, main, requestedDays, weaveSpec } from "../tapestry/server.mjs";
 
 test("links follow cause, handoff, resume and shared goals", () => {
   const stitch = (id, minutes, extra = {}) => ({
@@ -39,10 +39,18 @@ test("the weave carries named fields, not payloads", () => {
 let dir;
 let server;
 const port = 20000 + (process.pid % 20000);
-const get = (route, options = {}) => fetch(`http://127.0.0.1:${port}${route}`, options);
+let key;
+// As the page does it: the key from the launch page, sent as a header.
+const get = (route, options = {}) => fetch(`http://127.0.0.1:${port}${route}`, {
+  ...options,
+  headers: { authorization: `Bearer ${key}`, ...options.headers },
+});
+const keyIn = (launchPage) => /#key=([A-Za-z0-9_-]+)"/.exec(readFileSync(launchPage, "utf8"))[1];
 
 before(async () => {
-  dir = mkdtempSync(path.join(tmpdir(), "eventloom-tapestry-"));
+  const root = mkdtempSync(path.join(tmpdir(), "eventloom-tapestry-"));
+  dir = path.join(root, "logs");
+  mkdirSync(dir);
   process.env.EVENTLOOM_LOG_DIR = dir;
   const lines = [
     { id: "anchor", type: "eventloom.shard.anchored", actorId: "eventloom", timestamp: "2026-10-10T00:00:00.000Z", payload: {} },
@@ -57,11 +65,12 @@ before(async () => {
   }
   server = main(["--port", String(port), "--days", "3"]);
   await new Promise((resolve) => server.once("listening", resolve));
+  key = keyIn(server.launchPage);
 });
 
 after(() => {
   server?.close();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(path.dirname(dir), { recursive: true, force: true });
   delete process.env.EVENTLOOM_LOG_DIR;
 });
 
@@ -101,6 +110,42 @@ test("the launch address carries the default number of days", () => {
   assert.equal(launchUrl({ port: 4747, days: 3, correlation: "goal 1" }), "http://127.0.0.1:4747/?days=3&correlation=goal+1");
   assert.equal(requestedDays(new URLSearchParams("days=%20")), null);
   assert.equal(requestedDays(new URLSearchParams("days=14")), 14);
+});
+
+test("the log is shown only to whoever holds this run's key", async () => {
+  const bare = (headers) => fetch(`http://127.0.0.1:${port}/weave.json?days=1`, { headers });
+  for (const headers of [{}, { authorization: "Bearer " }, { authorization: `Bearer ${key.slice(0, -1)}x` }, { authorization: key }, { authorization: `Bearer ${key}${key}` }]) {
+    const res = await bare(headers);
+    assert.equal(res.status, 401, JSON.stringify(headers));
+    assert.match(await res.text(), /private to the user who started it/);
+  }
+  assert.equal((await bare({ authorization: `Bearer ${key}` })).status, 200);
+  // the page and its scripts hold nothing from the log and need no key
+  assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/weave.js`)).status, 200);
+});
+
+test("the key reaches the browser through a page only its owner can read", () => {
+  assert.equal(server.launchPage, launchPagePath(port));
+  assert.equal(statSync(server.launchPage).mode & 0o777, 0o600);
+  assert.equal(statSync(path.dirname(server.launchPage)).mode & 0o777, 0o700);
+  assert.ok(key.length >= 43, "256 bits, base64url");
+  const page = readFileSync(server.launchPage, "utf8");
+  // the key is in the fragment, which is never sent to a server or in a Referer
+  assert.match(page, new RegExp(`location\\.replace\\("http://127\\.0\\.0\\.1:${port}/\\?days=3#key=${key}"\\)`));
+  assert.match(page, /name="referrer" content="no-referrer"/);
+});
+
+test("each run has its own key, and the launch page goes when the server does", async () => {
+  const other = main(["--port", String(port + 1), "--demo"]);
+  await new Promise((resolve) => other.once("listening", resolve));
+  const otherKey = keyIn(other.launchPage);
+  assert.notEqual(otherKey, key);
+  const withKey = (value) => fetch(`http://127.0.0.1:${port + 1}/weave.json`, { headers: { authorization: `Bearer ${value}` } });
+  assert.equal((await withKey(key)).status, 401, "another server's key opens nothing here");
+  assert.equal((await withKey(otherKey)).status, 200);
+  await new Promise((resolve) => other.close(resolve));
+  assert.equal(existsSync(other.launchPage), false);
 });
 
 test("only this machine, only reads, only known files", async () => {

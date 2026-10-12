@@ -212,6 +212,9 @@ reports it.
 - `EVENTLOOM_MODE=full` (default) | `summary` (every string cut to 200
   characters) | `metadata` (an allow-list of structural fields, no content).
 - `EVENTLOOM_DISABLE=1` opts an agent out.
+- `eventloom append --payload '…'` puts the payload on a command line, which
+  other users of the machine can read in the process list while it runs. The
+  bundled adapters pass events on standard input instead (`eventloom ingest`).
 - The log directory is mode `0700` and shards are `0600`. Nothing leaves the
   machine. `eventloom purge <day>` deletes a day, with any copies `recover`
   set aside for it, and records that it did, so `verify` reports the gap as
@@ -245,10 +248,18 @@ yarn. New log lines are stitched in as they arrive.
 ![Designs, a session tag, and a handoff cord](docs/tapestry-detail.jpg)
 
 Start it with `eventloom tapestry`; it serves locally and loads nothing from
-the network. The address it prints, http://127.0.0.1:4747/?days=7, weaves the
-last 7 days of the log. Change the number in the address for more or fewer
-days, or remove `days` to weave the whole log (`--days N` or `--days all`
-sets what the printed address starts with).
+the network. It prints the path of a page to open, which leads to
+http://127.0.0.1:4747/?days=7 and weaves the last 7 days of the log. Change
+the number in the address for more or fewer days, or remove `days` to weave
+the whole log (`--days N` or `--days all` sets what the address starts with).
+
+The Tapestry shows the log only to the user who started it. A local port can
+be reached by every user of the machine, so the server answers for the log
+only to a random key it makes each time it starts. The page it tells you to
+open is a file only you can read, and it carries that key to your browser.
+The bare address shows nothing, so a bookmark or a hand-typed address will
+not work in a new tab: open it again with `eventloom tapestry` (or
+`omarchy-shell eventloom tapestry`).
 Pass `--correlation <goal-id>` (or append `correlation=<goal-id>` to the
 local URL) for a read-only goal-specific weave.
 Use `eventloom tapestry --demo` for a representative in-memory weave without

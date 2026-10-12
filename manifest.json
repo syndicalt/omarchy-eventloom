@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "syndicalt.eventloom",
   "name": "Eventloom",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "syndicalt",
   "license": "MIT",
   "description": "One local, append-only, tamper-evident log of what the AI agents on this machine did: sessions, tool calls, approvals and outcomes from omp and Claude Code, with a woven Tapestry view. Installs the eventloom CLI and its adapters when enabled.",

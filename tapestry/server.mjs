@@ -4,11 +4,17 @@
 // How much of the log is woven is the page's to say: /?days=N weaves the last
 // N daily shards, and without a days parameter the whole log. --days only
 // sets the number in the address this prints.
+//
+// The log is private to its owner, and a loopback port is not: any user of
+// the machine can connect to it. So the log's projection, /weave.json, is
+// answered only for a random key made at start-up, and that key reaches the
+// owner's browser through a page only the owner can read. See writeLaunchPage.
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { readFileSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { listShardPaths } from "../lib/paths.mjs";
+import { listShardPaths, logDir } from "../lib/paths.mjs";
 import { SHARD_ANCHOR_TYPE, familyOf } from "../lib/vocabulary.mjs";
 
 // Shard bookkeeping, not agent work: never woven.
@@ -428,6 +434,39 @@ export function launchUrl({ port, days, correlation }) {
   return `http://127.0.0.1:${port}/${text ? `?${text}` : ""}`;
 }
 
+// Where the page that opens this port's Tapestry is kept: beside the log, in
+// a directory only its owner can enter.
+export function launchPagePath(port) {
+  return path.join(path.dirname(logDir()), "tapestry", `launch-${port}.html`);
+}
+
+// The key must not appear anywhere another user can look. An address given to
+// `xdg-open` or a browser shows in the process list, so the address is never
+// handed over directly: this page, mode 0600, carries it and sends the
+// browser on. The key rides in the fragment, which browsers do not send to
+// servers or put in a Referer; the Tapestry page reads it from there.
+function writeLaunchPage(file, address, key) {
+  const target = JSON.stringify(`${address}#key=${key}`).replaceAll("<", "\\u003c");
+  const page = `<!doctype html>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>Opening the Tapestry</title>
+<script>location.replace(${target})</script>
+<p>Opening the Tapestry…</p>
+`;
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  chmodSync(path.dirname(file), 0o700);
+  writeFileSync(file, page, { mode: 0o600 });
+  chmodSync(file, 0o600); // the mode given to writeFileSync is cut down by the umask, and kept for an existing file
+}
+
+// Does the request carry this run's key? Compared in constant time.
+function carriesKey(req, key) {
+  const offered = Buffer.from(String(req.headers.authorization ?? ""));
+  const expected = Buffer.from(`Bearer ${key}`);
+  return offered.length === expected.length && timingSafeEqual(offered, expected);
+}
+
 export function main(argv) {
   let port = 4747, days = 7, demo = false, correlation = null;
   for (let i = 0; i < argv.length; i++) {
@@ -447,6 +486,8 @@ export function main(argv) {
     } else return usage(`unknown option ${arg}`);
   }
   const ASSETS = loadAssets();
+  const accessKey = randomBytes(32).toString("base64url");
+  const launchPage = launchPagePath(port);
   // The log is private. Answer only requests addressed to this machine, so a
   // page on another origin cannot reach it by rebinding a hostname.
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
@@ -461,6 +502,10 @@ export function main(argv) {
       if (req.method !== "GET" && !head) return reply(res, 405, "text/plain; charset=utf-8", "method not allowed", head);
       const request = new URL(req.url, "http://eventloom.local");
       if (request.pathname === "/weave.json") {
+        if (!carriesKey(req, accessKey)) {
+          res.setHeader("www-authenticate", "Bearer");
+          return reply(res, 401, "text/plain; charset=utf-8", "This Tapestry is private to the user who started it. Open it with: eventloom tapestry", head);
+        }
         const requestedCorrelation = request.searchParams.get("correlation") || correlation;
         let shown;
         try {
@@ -487,10 +532,16 @@ export function main(argv) {
       : `eventloom tapestry: ${error.message}`);
     process.exitCode = 1;
   });
+  const forgetLaunchPage = () => rmSync(launchPage, { force: true });
+  server.on("close", forgetLaunchPage);
+  process.once("exit", forgetLaunchPage);
   server.listen(port, "127.0.0.1", () => {
+    writeLaunchPage(launchPage, launchUrl({ port, days: demo ? null : days, correlation }), accessKey);
     const shown = demo ? "demo weave" : days === null ? "whole log" : `last ${days} day(s)`;
-    console.log(`tapestry: ${launchUrl({ port, days: demo ? null : days, correlation })} (${shown})`);
+    console.log(`tapestry: open file://${launchPage} (${shown})`);
+    console.log(`          it leads to http://127.0.0.1:${port}/ with a key that only you can read; the bare address shows nothing`);
     if (!demo) console.log("          change ?days=N in the address for more or fewer days; remove it for the whole log");
   });
+  server.launchPage = launchPage;
   return server;
 }

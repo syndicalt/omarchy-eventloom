@@ -34,14 +34,30 @@ bookkeeping and are not woven.
 
 The page is served to this machine only: requests must be `GET`/`HEAD` and
 addressed to `127.0.0.1` or `localhost` on the tapestry's port, and only the
-tapestry's own files are reachable. `weave.json` carries named fields per log
+tapestry's own files are reachable.
+
+That keeps other machines and other web pages out, but not other users of
+this machine, who can connect to a loopback port as freely as the log's owner
+can. So `weave.json` is answered only for a request that carries, as
+`Authorization: Bearer <key>`, a 256-bit key the server makes at start-up;
+anything else gets 401. The key reaches the owner's browser through
+`~/.local/state/omarchy/agents/tapestry/launch-<port>.html`, a file of mode
+`0600` in a directory of mode `0700`, which redirects to the tapestry with the
+key in the address's fragment. The page moves it to `sessionStorage` and out
+of the address bar. The key is never put in an address handed to a program,
+because a command line can be read by anyone; `eventloom tapestry` prints the
+file's path and the plugin opens the file. The file is removed when the
+server stops, and the next server makes a new key. The page's own files need
+no key: they are this repository's code and hold nothing from the log.
+
+`weave.json` carries named fields per log
 line (type, tool, actor, session, time, duration, outcome, a short hash, and
 a few short payload labels such as `model` or `status`). Payloads themselves
 stay in the shard.
 
 `--correlation <goal-id>` filters the projection to stitches with that
 correlation (including Fleet's `payload.goal_id`); the browser form is
-`http://127.0.0.1:4747/?correlation=<goal-id>`. Filtering changes only the
+`?correlation=<goal-id>` on the tapestry's address. Filtering changes only the
 disposable weave, never the shard or its integrity chain.
 
 `eventloom tapestry --demo` serves a deterministic in-memory weave: a
