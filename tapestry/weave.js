@@ -992,8 +992,25 @@ function signature(spec) {
   return stitches.length + ":" + (stitches.at(-1)?.id ?? "") + ":" + (spec.links?.length ?? 0);
 }
 
+// The server answers for the log only to the key it made at start-up. The
+// launch page passes that key in the address's fragment; it is kept for this
+// tab alone and taken out of the address bar at once.
+const KEY_STORE = "eventloom-tapestry-key";
+
+function accessKey() {
+  const offered = new URLSearchParams(location.hash.slice(1)).get("key");
+  if (offered) {
+    sessionStorage.setItem(KEY_STORE, offered);
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  return sessionStorage.getItem(KEY_STORE) ?? "";
+}
+
 async function load() {
-  const res = await fetch("/weave.json" + location.search, { cache: "no-store" });
+  const res = await fetch("/weave.json" + location.search, {
+    cache: "no-store",
+    headers: { authorization: "Bearer " + accessKey() },
+  });
   // the server says what is wrong with the address, e.g. ?days=abc
   if (!res.ok) throw new Error((await res.text()) || "weave.json answered " + res.status);
   return res.json();

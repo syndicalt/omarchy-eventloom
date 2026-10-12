@@ -2,7 +2,8 @@
 // hook and uninstall.sh, against a throwaway HOME. `npm` is a stand-in that
 // copies this checkout's node_modules, so no network is involved.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
@@ -39,6 +40,8 @@ function machine(t) {
   const eventloom = path.join(home, ".local", "bin", "eventloom");
   return {
     home,
+    tools,
+    basePath,
     sh,
     eventloom: (args, options) => sh(eventloom, args, options),
     install: (options, args = []) => sh(path.join(REPO, "install.sh"), args, options),
@@ -185,4 +188,66 @@ test("the plugin's setup installs once, then only when asked or when the checkou
   assert.equal(readFileSync(stamp, "utf8"), installedFrom);
 
   assert.match(box.pluginSetup(["--force"]).output, /install complete/);
+});
+
+// Runs plugin/open-tapestry.sh in its own process group, so that the server
+// it leaves running can be stopped with it afterwards.
+function openTapestry(t, box, port) {
+  const opened = path.join(box.home, "opened");
+  writeFileSync(path.join(box.tools, "xdg-open"), `#!/bin/sh\nprintf '%s\\n' "$@" >> '${opened}'\n`, { mode: 0o755 });
+  return () => new Promise((resolve) => {
+    const child = spawn("sh", [path.join(REPO, "plugin", "open-tapestry.sh")], {
+      detached: true,
+      env: { HOME: box.home, PATH: box.basePath, EVENTLOOM_TAPESTRY_PORT: String(port) },
+    });
+    t.after(() => {
+      try { process.kill(-child.pid, "SIGTERM"); } catch { /* the group is already gone */ }
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { output += chunk; });
+    child.on("close", (status) => resolve({
+      status,
+      output,
+      opened: existsSync(opened) ? readFileSync(opened, "utf8").trim().split("\n") : [],
+    }));
+  });
+}
+
+test("opening the Tapestry hands the browser a private file, never an address with the key", async (t) => {
+  const box = machine(t);
+  box.install();
+  const port = 21000 + (process.pid % 20000);
+  const launchPage = path.join(box.home, ".local", "state", "omarchy", "agents", "tapestry", `launch-${port}.html`);
+  const open = openTapestry(t, box, port);
+
+  const first = await open();
+  assert.equal(first.status, 0, first.output);
+  assert.deepEqual(first.opened, [launchPage], "what the browser is given is a path");
+  assert.equal(statSync(launchPage).mode & 0o777, 0o600);
+  const key = /#key=([A-Za-z0-9_-]+)"/.exec(readFileSync(launchPage, "utf8"))[1];
+
+  const weave = (headers) => fetch(`http://127.0.0.1:${port}/weave.json?days=1`, { headers });
+  assert.equal((await weave({})).status, 401, "another user of the machine gets nothing");
+  assert.equal((await weave({ authorization: `Bearer ${key}` })).status, 200);
+
+  // a second call finds the server it started and opens the same page
+  const second = await open();
+  assert.equal(second.status, 0, second.output);
+  assert.deepEqual(second.opened, [launchPage, launchPage]);
+  assert.equal(/#key=([A-Za-z0-9_-]+)"/.exec(readFileSync(launchPage, "utf8"))[1], key, "no second server was started");
+});
+
+test("opening the Tapestry refuses a port held by something else", async (t) => {
+  const box = machine(t);
+  box.install();
+  const port = 22000 + (process.pid % 20000);
+  const stranger = createServer((_req, res) => res.end("not a tapestry")).listen(port, "127.0.0.1");
+  await new Promise((resolve) => stranger.once("listening", resolve));
+  t.after(() => stranger.close());
+
+  const result = await openTapestry(t, box, port)();
+  assert.equal(result.status, 1);
+  assert.match(result.output, new RegExp(`port ${port} is held by a server this cannot use`));
+  assert.deepEqual(result.opened, []);
 });
