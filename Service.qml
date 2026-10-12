@@ -13,11 +13,18 @@ import Quickshell.Io
 // The service draws nothing. A failed setup is announced with one
 // notification; the log's own health is `eventloom doctor`.
 //
+// A notification is sent by running a command, and a command's arguments can
+// be read by every user of the machine. So notifications carry a verdict and
+// where to look, never what a script or the doctor printed: that can quote
+// the user's own files (a settings.json that does not parse, for one). The
+// detail stays here, for `status`, and in the terminal.
+//
 // IPC (omarchy-shell eventloom <method>):
 //   status     JSON: { state, detail } — state is checking, installing,
 //              ready or failed
 //   install    run the installer again now
-//   doctor     run `eventloom doctor` and notify its verdict
+//   doctor     run `eventloom doctor` and notify its verdict (healthy, or
+//              how many problems; the problems themselves are not notified)
 //   tapestry   open the Tapestry in the browser
 Item {
   id: service
@@ -33,6 +40,7 @@ Item {
   property string setupState: "checking"
   property string detail: ""
 
+  // `message` is fixed text, at most with a count or this plugin's path.
   function notify(message, urgency) {
     Quickshell.execDetached(["omarchy-notification-send", "-u", urgency || "low", message])
   }
@@ -73,9 +81,9 @@ Item {
       }
       service.setupState = "failed"
       service.detail = service.lastLine(setupErr.text) || service.lastLine(setupOut.text) || ("setup exited " + exitCode)
-      console.warn("eventloom: setup failed (" + exitCode + "): " + service.detail)
-      service.notify("Eventloom could not be installed: " + service.detail
-        + " Run " + service.pluginDir + "/install.sh in a terminal to see why.", "normal")
+      console.warn("eventloom: setup failed (" + exitCode + "); `omarchy-shell eventloom status` has the reason")
+      service.notify("Eventloom could not be installed. Run " + service.pluginDir
+        + "/install.sh in a terminal to see why.", "normal")
     }
   }
 
@@ -87,7 +95,8 @@ Item {
         return line.indexOf("fail") === 0 || line.indexOf("warn") === 0
       })
       if (exitCode === 0 && problems.length === 0) service.notify("Eventloom: the log is healthy.")
-      else service.notify("Eventloom doctor: " + (problems.length ? problems.join(" · ") : "exited " + exitCode), "normal")
+      else service.notify("Eventloom doctor found " + (problems.length || "a") + (problems.length > 1 ? " problems" : " problem")
+        + ". Run `eventloom doctor` in a terminal to see them.", "normal")
     }
   }
 

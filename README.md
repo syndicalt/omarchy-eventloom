@@ -91,13 +91,17 @@ Adding only clones the repository. Enabling starts a small background service
 
 It finishes by running `eventloom doctor`, and it runs again by itself after
 `omarchy plugin update`. If it cannot finish you get one notification saying
-why. Requires `bun`, or `node >= 20` with `npm`.
+so; the reason is in `omarchy-shell eventloom status`, and running
+`install.sh` in a terminal shows it in full. Notifications never quote what
+went wrong, because the text of a notification can be read by other users of
+the machine while it is being sent. Requires `bun`, or `node >= 20` with
+`npm`.
 
 The service answers on the shell's IPC:
 
 ```sh
 omarchy-shell eventloom status     # {"state":"ready", …}
-omarchy-shell eventloom doctor     # run the health check and notify the result
+omarchy-shell eventloom doctor     # run the health check; notifies healthy, or how many problems
 omarchy-shell eventloom tapestry   # open the Tapestry in the browser
 omarchy-shell eventloom install    # run the installer again now
 ```
