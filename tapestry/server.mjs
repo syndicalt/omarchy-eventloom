@@ -5,6 +5,7 @@
 // N daily shards, and without a days parameter the whole log. --days only
 // sets the number in the address this prints.
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { listShardPaths } from "../lib/paths.mjs";
@@ -381,11 +382,16 @@ const ASSET_FILES = {
   "/yarn.js": "yarn.js",
   "/layout.mjs": "layout.mjs",
   "/motif.mjs": "motif.mjs",
-  "/vendor/three.module.min.js": "vendor/three.module.min.js",
 };
+// three.js is a pinned dependency, installed beside the runtime, and served
+// from there under the address the page imports. Its package exports the
+// build directory only through its main entry, so that is what is resolved.
+const THREE_MODULE = path.join(path.dirname(createRequire(import.meta.url).resolve("three")), "three.module.min.js");
 
 function loadAssets() {
-  const assets = {};
+  const assets = {
+    "/vendor/three.module.min.js": { type: "text/javascript; charset=utf-8", body: readFileSync(THREE_MODULE) },
+  };
   for (const [route, file] of Object.entries(ASSET_FILES)) {
     assets[route] = {
       type: file.endsWith(".html") ? "text/html; charset=utf-8" : "text/javascript; charset=utf-8",

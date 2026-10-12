@@ -55,6 +55,8 @@ done
 # Releases before 0.2.0 kept their modules flat and the tapestry outside $LIB_DIR.
 rm -f "$LIB_DIR/eventloom.mjs" "$LIB_DIR/engine.mjs" "$LIB_DIR/claude-settings.mjs" "$LIB_DIR/adapters.json"
 rm -rf "$HOME/.local/lib/tapestry"
+# three.js used to be carried in the repository; it is a dependency now.
+rm -rf "$LIB_DIR/tapestry/vendor"
 say "installed cli -> $BIN_DIR/eventloom"
 
 # --- 4. omp adapter, when omp is present --------------------------------------

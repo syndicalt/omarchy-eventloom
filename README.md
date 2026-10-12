@@ -80,8 +80,9 @@ Adding only clones the repository. Enabling starts a small background service
 (no bar icon, no window) which, a few seconds later, installs everything:
 
 - the `eventloom` CLI into `~/.local/bin`, and its code into
-  `~/.local/lib/eventloom` with `@eventloom/runtime` exactly as
-  `package-lock.json` pins it (this is the one step that uses the network);
+  `~/.local/lib/eventloom` with its two dependencies, `@eventloom/runtime`
+  and `three` (for the Tapestry), exactly as `package-lock.json` pins them
+  (this is the one step that uses the network);
 - the omp extension, if omp is installed;
 - the Claude Code hooks, if Claude Code is installed. `~/.claude/settings.json`
   is edited in place: other hooks are kept, the previous contents are saved

@@ -5,14 +5,17 @@
   "type": "module",
   "description": "Universal append-only agent event log for Omarchy",
   "license": "MIT",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "node --test",
     "lint": "eslint . && tsc -p extensions",
     "check": "npm run lint && npm test"
   },
   "dependencies": {
-    "@eventloom/runtime": "1.0.0"
+    "@eventloom/runtime": "1.0.0",
+    "three": "0.170.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

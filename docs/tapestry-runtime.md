@@ -49,7 +49,8 @@ research session that asks for approval and hands off, the build that
 receives it, a review that is resumed, and a forked experiment that fails.
 It neither reads nor writes logs.
 
-three.js r170 is vendored in `tapestry/vendor/` (MIT, licence alongside), so
+three.js r170 is a pinned dependency (`three` 0.170.0 in `package-lock.json`,
+MIT), installed with the runtime and served by the tapestry server itself, so
 the view works offline and loads nothing from the network.
 
 ## From log lines to stitches

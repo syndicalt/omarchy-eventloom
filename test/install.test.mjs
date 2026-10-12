@@ -18,7 +18,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 mkdir -p "$prefix/node_modules"
-cp -R "${REPO}node_modules/@eventloom" "${REPO}node_modules/zod" "${REPO}node_modules/nanoid" "$prefix/node_modules/"
+cp -R "${REPO}node_modules/@eventloom" "${REPO}node_modules/zod" "${REPO}node_modules/nanoid" "${REPO}node_modules/three" "$prefix/node_modules/"
 `;
 
 function machine(t) {
