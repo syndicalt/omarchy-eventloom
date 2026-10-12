@@ -3,9 +3,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Eventloom Tapestry</title>
+<link rel="icon" href="data:,">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box }
+  [hidden] { display: none !important }
   body {
     margin: 0; overflow: hidden;
     background: #120e0b;
@@ -17,30 +19,41 @@
   header { position: fixed; z-index: 2; top: 18px; left: 0; right: 0; text-align: center; pointer-events: none }
   h1 { font: 28px "Palatino Linotype", Palatino, Georgia, serif; font-weight: 500; letter-spacing: .08em; margin: 0 0 2px; color: #f6ecd9 }
   header p { margin: 0; color: #f0e2cc; letter-spacing: .12em; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace }
-  #hint { position: fixed; right: 32px; top: 28px; color: #f0e2cc; letter-spacing: .04em; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace }
+  #hint { position: fixed; z-index: 2; right: 32px; top: 28px; color: #f0e2cc; letter-spacing: .04em; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace }
+  @media (max-width: 900px) { #hint { display: none } }
   #panel {
-    position: fixed; right: 28px; top: 118px; width: min(340px, calc(100vw - 56px));
-    padding: 18px 18px 16px; border-radius: 2px 10px 10px 2px;
-    background: rgba(246, 236, 216, .96); color: #3a2c1e;
-    border: 1px solid #8d7350; border-left: 5px solid #6b4c7a;
-    box-shadow: 0 18px 40px rgba(0,0,0,.35);
-    transform: translateX(calc(100% + 40px)); transition: transform .2s ease;
+    position: fixed; z-index: 3; left: 0; top: 0; width: min(320px, calc(100vw - 24px));
+    max-height: min(420px, calc(100vh - 24px)); overflow: auto;
+    padding: 14px 16px 12px; border-radius: 3px 9px 9px 9px;
+    background: rgba(246, 236, 216, .97); color: #3a2c1e;
+    border: 1px solid #8d7350; border-top: 4px solid #6b4c7a;
+    box-shadow: 0 14px 34px rgba(0,0,0,.42);
+    opacity: 0; visibility: hidden; transform: scale(.94); transform-origin: 0 0;
+    transition: opacity .12s ease, transform .12s ease, visibility 0s .12s;
   }
-  #panel.show { transform: none }
+  #panel.show { opacity: 1; visibility: visible; transform: none; transition: opacity .12s ease, transform .12s ease }
   #panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; color: #2c2116 }
   #panel p { color: #5c4b38; line-height: 1.55; margin: 5px 0 }
   #panel b { color: #2c2116 }
   #panel code { color: #7a6248; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace }
   #empty {
     position: fixed; inset: 0; display: grid; place-items: center;
-    color: #4a3b2a; font: 20px "Palatino Linotype", Palatino, Georgia, serif;
+    color: #d8c8a8; font: 20px "Palatino Linotype", Palatino, Georgia, serif;
     pointer-events: none; text-align: center;
   }
-  #empty small { display: block; margin-top: 8px; font: 10px ui-monospace, monospace; color: #7d6a52; letter-spacing: .08em }
+  #tip {
+    position: fixed; z-index: 3; pointer-events: none; padding: 5px 9px; border-radius: 3px;
+    background: rgba(28, 20, 14, .92); color: #f3ead8; border: 1px solid rgba(214, 186, 140, .35);
+    font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap;
+  }
+  #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, transparent 52%, rgba(8, 5, 3, .62) 100%) }
+  #empty small { display: block; margin-top: 8px; font: 10px ui-monospace, monospace; color: #b39c78; letter-spacing: .08em }
 </style>
-<header><h1>Tapestry</h1><p>SESSIONS GROW UPWARD FROM THEIR START</p></header>
-<div id="hint">drag to pan · wheel to zoom · select a session</div>
 <canvas id="cloth"></canvas>
+<div id="vignette"></div>
+<header><h1>Tapestry</h1><p hidden></p></header>
+<div id="hint">drag to pan · wheel to zoom · click a stitch</div>
+<div id="tip" hidden></div>
 <div id="empty" hidden>Nothing woven yet.<small>Start an agent session, then reload this read-only view.</small></div>
 <aside id="panel"></aside>
 <script type="module" src="/weave.js"></script>
