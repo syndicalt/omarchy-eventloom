@@ -1,32 +1,108 @@
 # omarchy-eventloom
 
-A local, append-only event log shared by the AI agents running on Omarchy,
-built on [@eventloom/runtime](https://github.com/syndicalt/eventloom).
+One local log of what the AI agents on your machine did.
 
-Each agent's adapter writes to one hash-chained JSONL shard per local day:
+Eventloom is an Omarchy plugin that records, in a single append-only file per
+day, every session your coding agents start and finish, every tool they call,
+every approval they ask for, and how each ended. It captures omp and Claude
+Code out of the box, and anything else can write to it with one command. The
+log never leaves the machine, is redacted before anything is written, and is
+hash-chained, so a line that was edited or removed afterwards shows up.
 
 ```
-~/.local/state/omarchy/agents/logs/2026-10-10.jsonl
+$ eventloom tail --limit 4
+{"ts":"2026-10-12T14:02:11.482Z","type":"agent.session.started","actor":"claude","thread":"claude-0b9a…","payload":{"cwd":"/home/me/app","git_branch":"main","git_dirty":true,…}}
+{"ts":"2026-10-12T14:02:19.007Z","type":"agent.tool.completed","actor":"claude","thread":"claude-0b9a…","payload":{"tool":"Bash","tool_input_keys":["command","description"],…}}
+{"ts":"2026-10-12T14:02:24.650Z","type":"agent.tool.failed","actor":"omp","thread":"omp-01a1…","payload":{"tool":"read","duration_ms":12,…}}
+{"ts":"2026-10-12T14:03:40.118Z","type":"agent.session.completed","actor":"claude","thread":"claude-0b9a…","payload":{"reason":"prompt_input_exit",…}}
 ```
+
+![The Tapestry: a day of agent sessions woven as bands, one stitched design per action](preview.jpg)
+
+*The Tapestry, Eventloom's view of the log: each band is a session growing
+upward from its start, each stitched design one thing an agent did.*
 
 ## Why
 
-Agents on the same machine work blind to each other, and each stores its
-sessions in its own place and format. omarchy-eventloom gives them one record
-of what ran, which tools were used, what needed approval, what completed or
-failed, and how sessions join into a task (`correlation_id`).
+Run more than one agent, or one agent for more than an afternoon, and three
+questions come up that nothing answers well:
+
+- **What happened while I was not watching?** Each agent keeps its own
+  transcript in its own place and format. There is no one place to see that
+  omp ran forty tool calls in a repository between two and three, that one
+  failed, and that Claude Code then picked the work up.
+- **Can I trust the record?** A transcript the agent itself can rewrite is not
+  evidence of what it did. Eventloom's log is written by adapters outside the
+  agent, sealed as a hash chain, and each day is anchored to the one before,
+  so `eventloom verify` notices an edited event, a shortened day and a
+  missing one. (What that does and does not protect against is spelled out
+  under [Integrity](#integrity).)
+- **How do agents find out about each other?** Agents on one machine work
+  blind. A shared log gives them, and you, one thing to read: `eventloom tail`
+  from a script, a hook or another agent, and a `correlation_id` that ties the
+  sessions of different agents to the same task.
+
+It is deliberately a record of *what happened*, not *what was said*. The
+bundled adapters log tool names and argument names, never arguments, output
+or prompts, so the log is safe to keep and cheap to read. See
+[Privacy](#privacy).
+
+## How it works
+
+```
+ omp ──extension──┐
+                  ├─► eventloom CLI ─► redact ─► seal ─► ~/.local/state/omarchy/agents/logs/
+ Claude ──hooks───┘                                         2026-10-12.jsonl   (one per day,
+ anything ─ eventloom append / ingest                                           hash-chained)
+                                                                 │
+                                    eventloom tail · verify · doctor · tapestry
+```
+
+- **Adapters** sit outside the agents and use their official extension
+  points: an omp extension and Claude Code hooks. They never write to the
+  agent's terminal and never block it on a failure.
+- **The CLI** is the only writer. It adds where a session ran (host, Omarchy
+  release, git branch and commit), redacts, and hands the event to
+  [@eventloom/runtime](https://github.com/syndicalt/eventloom), which seals it
+  into the day's chain.
+- **Readers** are plain commands over plain JSONL, plus the Tapestry, a local
+  page that weaves the log into a picture.
 
 ## Install
 
+As an Omarchy plugin:
+
 ```sh
-git clone <this repo> ~/Projects/omarchy-eventloom
-~/Projects/omarchy-eventloom/install.sh
+omarchy plugin add https://github.com/syndicalt/omarchy-eventloom.git --enable
 ```
 
-Requires `bun`, or `node >= 20` with `npm`. The installer copies the code to
-`~/.local/lib/eventloom`, installs `@eventloom/runtime` there exactly as
-`package-lock.json` pins it, wires the adapters for the agents it finds, and
-finishes by running `eventloom doctor`. Run it again to upgrade.
+Adding only clones the repository. Enabling starts a small background service
+(no bar icon, no window) which, a few seconds later, installs everything:
+
+- the `eventloom` CLI into `~/.local/bin`, and its code into
+  `~/.local/lib/eventloom` with `@eventloom/runtime` exactly as
+  `package-lock.json` pins it (this is the one step that uses the network);
+- the omp extension, if omp is installed;
+- the Claude Code hooks, if Claude Code is installed. `~/.claude/settings.json`
+  is edited in place: other hooks are kept, the previous contents are saved
+  beside it as `settings.json.eventloom-backup`, and a file that cannot be
+  parsed is left alone.
+
+It finishes by running `eventloom doctor`, and it runs again by itself after
+`omarchy plugin update`. If it cannot finish you get one notification saying
+why. Requires `bun`, or `node >= 20` with `npm`.
+
+The service answers on the shell's IPC:
+
+```sh
+omarchy-shell eventloom status     # {"state":"ready", …}
+omarchy-shell eventloom doctor     # run the health check and notify the result
+omarchy-shell eventloom tapestry   # open the Tapestry in the browser
+omarchy-shell eventloom install    # run the installer again now
+```
+
+Without the plugin system, clone the repository anywhere and run
+`./install.sh`; run it again to upgrade.
 
 ## Usage
 
@@ -182,12 +258,14 @@ The projection and its stitch vocabulary are specified in
 ## Uninstall
 
 ```sh
-~/Projects/omarchy-eventloom/uninstall.sh           # keeps the logs
-~/Projects/omarchy-eventloom/uninstall.sh --purge   # deletes them too
+~/.config/omarchy/plugins/syndicalt.eventloom/uninstall.sh           # keeps the logs
+~/.config/omarchy/plugins/syndicalt.eventloom/uninstall.sh --purge   # deletes them too
+omarchy plugin remove syndicalt.eventloom
 ```
 
-Removes the installed files and unregisters the Claude hooks, leaving every
-other hook untouched.
+Run `uninstall.sh` first: removing the plugin only deletes its folder. The
+script removes the installed files and unregisters the Claude hooks, leaving
+every other hook untouched.
 
 ## Development
 
@@ -196,6 +274,10 @@ npm install
 npm test        # node --test
 npm run lint    # eslint, and tsc over the omp extension
 ```
+
+`manifest.json` and `Service.qml` are the Omarchy plugin; `plugin/` holds the
+two scripts the service runs. `omarchy plugin validate .` needs a clean clone,
+since a development checkout's `node_modules` contains symlinks.
 
 `EVENTLOOM_LOG_DIR` points the log somewhere else, which is how the tests
 isolate themselves. The omp adapter tests load `extensions/eventloom.ts`
