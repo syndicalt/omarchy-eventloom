@@ -17,7 +17,7 @@ if command -v node >/dev/null 2>&1; then
   NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
   [ "$NODE_MAJOR" -ge 20 ] || command -v bun >/dev/null 2>&1 || die "node >= 20 or bun is required (found node $NODE_MAJOR)"
 elif ! command -v bun >/dev/null 2>&1; then
-  die "bun or node >= 20 is required (https://bun.sh, or: sudo pacman -S nodejs npm)"
+  die "bun (https://bun.sh), or node >= 20 with npm, is required"
 fi
 
 # --- 2. dependencies, exactly as locked ----------------------------------------
