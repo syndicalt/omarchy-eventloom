@@ -74,7 +74,10 @@ test("a session is briefed once, before its first turn, and names itself to the 
   installStandIn("echo unwanted");
   assert.equal(await omp.fire("before_agent_start", {}, context("sess-off")), undefined);
   delete process.env.EVENTLOOM_MEMORY;
+  // let this session's events land before the next test reads the file
+  installStandIn(`cat >> '${received}'`);
   omp.fire("session_shutdown", {}, ctx);
+  await until(() => ingested().some((event) => event.payload.reason === "shutdown"));
 });
 
 test("a session with two turns and a tool call is one session, in order", options, async () => {
