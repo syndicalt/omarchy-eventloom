@@ -199,10 +199,10 @@ test("the plugin's setup installs once, then only when asked or when the checkou
 function openTapestry(t, box, port) {
   const opened = path.join(box.home, "opened");
   writeFileSync(path.join(box.tools, "xdg-open"), `#!/bin/sh\nprintf '%s\\n' "$@" >> '${opened}'\n`, { mode: 0o755 });
-  return () => new Promise((resolve) => {
+  return (env = { EVENTLOOM_TAPESTRY_PORT: String(port) }) => new Promise((resolve) => {
     const child = spawn("sh", [path.join(REPO, "plugin", "open-tapestry.sh")], {
       detached: true,
-      env: { HOME: box.home, PATH: box.basePath, EVENTLOOM_TAPESTRY_PORT: String(port) },
+      env: { HOME: box.home, PATH: box.basePath, ...env },
     });
     t.after(() => {
       try { process.kill(-child.pid, "SIGTERM"); } catch { /* the group is already gone */ }
@@ -242,6 +242,47 @@ test("opening the Tapestry hands the browser a private file, never an address wi
   assert.equal(/#key=([A-Za-z0-9_-]+)"/.exec(readFileSync(launchPage, "utf8"))[1], key, "no second server was started");
 });
 
+test("opening the Tapestry uses the port the owner chose", async (t) => {
+  const box = machine(t);
+  box.install();
+  const port = 24000 + (process.pid % 1000);
+  assert.equal(box.eventloom(["config", "set", "tapestry_port", String(port)]).status, 0);
+  const result = await openTapestry(t, box, port)({});
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(result.opened, [path.join(box.home, ".local", "state", "omarchy", "agents", "tapestry", `launch-${port}.html`)]);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
+});
+
+// `script` gives the installer a terminal, which is when it asks.
+const scriptTool = spawnSync("sh", ["-c", "command -v script"], { encoding: "utf8" }).stdout.trim();
+
+test("in a terminal the installer asks for the Tapestry port; without one it asks nothing", { skip: scriptTool ? false : "no `script` to provide a terminal" }, (t) => {
+  const box = machine(t);
+  const inTerminal = (answer) => spawnSync(scriptTool, ["-qec", `sh '${path.join(REPO, "install.sh")}'`, "/dev/null"], {
+    input: `${answer}\n`, encoding: "utf8", env: { HOME: box.home, PATH: box.basePath },
+  });
+  const port = () => box.eventloom(["config", "get", "tapestry_port"]).output.trim();
+
+  const silent = box.install();
+  assert.equal(silent.status, 0, silent.output);
+  assert.doesNotMatch(silent.output, /Tapestry port/);
+
+  const chosen = inTerminal("5151");
+  assert.equal(chosen.status, 0, chosen.stdout);
+  assert.match(chosen.stdout, /Tapestry port \[4747\]: /);
+  assert.match(chosen.stdout, /the Tapestry will be served on port 5151/);
+  assert.equal(port(), "5151");
+
+  const kept = inTerminal("");
+  assert.match(kept.stdout, /Tapestry port \[5151\]: /);
+  assert.equal(port(), "5151", "enter keeps what was there");
+
+  const refused = inTerminal("80");
+  assert.equal(refused.status, 0, "a bad answer does not fail the install");
+  assert.match(refused.stdout, /kept port 5151/);
+  assert.equal(port(), "5151");
+});
+
 test("opening the Tapestry refuses a port held by something else", async (t) => {
   const box = machine(t);
   box.install();
@@ -252,6 +293,6 @@ test("opening the Tapestry refuses a port held by something else", async (t) => 
 
   const result = await openTapestry(t, box, port)();
   assert.equal(result.status, 1);
-  assert.match(result.output, new RegExp(`port ${port} is held by a server this cannot use`));
+  assert.match(result.output, new RegExp(`port ${port} is held by a server this cannot use.*eventloom config set tapestry_port <n>`));
   assert.deepEqual(result.opened, []);
 });

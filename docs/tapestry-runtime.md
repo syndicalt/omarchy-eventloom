@@ -17,7 +17,7 @@ links one log line to another is a length of plied yarn.
 ## Runtime
 
     ~/.local/state/omarchy/agents/logs/*.jsonl
-            │  eventloom tapestry [--port 4747] [--days N|all] [--correlation goal-id]
+            │  eventloom tapestry [--port N] [--days N|all] [--correlation goal-id]
             │  page address: ?days=N for the last N daily shards, none for the whole log
             ▼
       server.mjs: read-only weave JSON (stitches, links)
