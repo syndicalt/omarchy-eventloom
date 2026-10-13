@@ -131,6 +131,27 @@ test("a session is briefed as it opens, and only then", (t) => {
   assert.match(run(["brief", "--actor", "omp"]).stderr, /brief requires --actor and --session/);
 });
 
+test("a long memory is briefed as its first summary and its latest eight", (t) => {
+  const { projects, run, events, as } = sandbox(t);
+  const ids = [];
+  for (let i = 1; i <= 11; i++) {
+    ids.push(JSON.parse(run(["note", "--cwd", projects.loom], { input: `summary number ${i}.`, env: as("omp", "s1") }).stdout).id);
+  }
+  run(["note", "--cwd", projects.other], { input: "another project's first.", env: as("omp", "s1") });
+
+  const briefed = run(["brief", "--actor", "claude", "--session", "c1", "--cwd", projects.loom]).stdout;
+  const told = [...briefed.matchAll(/summary number (\d+)\./g)].map((match) => Number(match[1]));
+  assert.deepEqual(told, [1, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.match(briefed, /summary number 1\.\n {2}… \(earlier summaries left out/);
+  assert.doesNotMatch(briefed, /another project/);
+  assert.deepEqual(events().at(-1).payload.recalled, [ids[0], ...ids.slice(3)], "the recall names all nine");
+
+  // with eight or fewer the first is already among them, and nothing is left out
+  const short = run(["brief", "--actor", "claude", "--session", "c1", "--cwd", projects.other]).stdout;
+  assert.equal(short.match(/another project's first\./g).length, 1);
+  assert.doesNotMatch(short, /left out/);
+});
+
 test("the tapestry draws a memory thread from each summary to the session that recalled it", () => {
   const at = (minutes) => new Date(Date.UTC(2026, 9, 10, 8, minutes)).toISOString();
   const stitch = (id, minutes, type, session, payload = {}) => ({

@@ -143,7 +143,8 @@ eventloom recall --tag release   # narrowed by tag; also --correlation <id>, --a
 ```
 
 - **Written by the agent.** When a session opens, the adapter tells the agent
-  how to record a summary and gives it the last 8 recorded for the project.
+  how to record a summary and gives it the project's first summary (where
+  the work began, however long ago) and the last 8.
   Claude Code receives this through its SessionStart hook, omp before the
   session's first turn. Whether a summary gets written is then up to the
   agent: nothing forces it, and some replies will go unrecorded.
