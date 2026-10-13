@@ -43,7 +43,7 @@ writes the seal file. It asks a helper, which runs as another user, to append.
 | Seal user | A system account, `eventloom-seal`, with no login shell. |
 | Seal file | `/var/lib/eventloom-seal/<uid>.evtseal`. Owned by the seal user, group the log owner's primary group, mode `0640`: the owner reads it, nobody but the seal user writes it. One file per log owner, so several users of a machine can each seal. |
 | Helper | `/usr/local/libexec/eventloom-seal`, owned by root, mode `0755`. POSIX shell and `sha256sum`, `flock`, `date` from the system. It runs nothing from a home directory, because the agent can change what is there. |
-| Sudoers rule | `/etc/sudoers.d/eventloom-seal`: the log owner may run the helper, and only the helper, as `eventloom-seal` without a password. Checked with `visudo -c` before it is installed. |
+| Sudoers rule | `/etc/sudoers.d/eventloom-seal-<user>`, one per sealed account: that user may run the helper, and only the helper, as `eventloom-seal` without a password. Checked with `visudo -c` before it is installed. |
 
 The helper takes the calling user from `SUDO_UID`, which sudo sets and the
 caller cannot, and writes only that user's file.
@@ -70,8 +70,10 @@ eventloom-seal 1 uid=1000
 
 ### What the helper checks
 
-- The request matches a strict pattern: a day, a whole number, a hash in hex.
-  Anything else is refused. Input is bounded in size.
+- The request is four arguments, each matched whole against a strict pattern:
+  a kind, a day, a whole number, and a hash in hex or `purged`/`recovered`.
+  Anything else is refused, including an argument that holds a line break,
+  which could otherwise smuggle a second, forged record into the file.
 - A `head` must move forward: a later day, or the same day at a higher
   position. A lower one is refused unless an `ack` for that shard comes
   first.
