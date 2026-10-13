@@ -3,7 +3,9 @@
 # PostToolUse and PostToolUseFailure; Claude passes the hook input on stdin.
 #
 # Runs in the foreground, so the event is sealed before the hook returns.
-# Nothing is printed: a hook's output can surface in the session.
+# Errors are never printed: a hook's output can surface in the session.
+# Standard output is passed on, because on SessionStart it is meant to: it is
+# the briefing from the project's memory, which Claude adds to its context.
 [ "${EVENTLOOM_DISABLE:-0}" = "1" ] && exit 0
 eventloom="$HOME/.local/bin/eventloom"
 [ -x "$eventloom" ] || exit 0
@@ -14,7 +16,7 @@ crash_summary() {
   printf '%s\n' "$failure" | sed -n '/^[A-Za-z]*Error/{p;q;}' | grep . || printf '%s\n' "$failure" | tail -n 1
 }
 
-failure="$("$eventloom" claude-hook 2>&1 >/dev/null)" && exit 0
+{ failure="$("$eventloom" claude-hook 2>&1 >&3)"; } 3>&1 && exit 0
 case "$failure" in
   eventloom:*) ;; # eventloom recorded this failure itself
   *)

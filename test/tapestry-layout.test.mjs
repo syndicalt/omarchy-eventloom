@@ -86,7 +86,12 @@ test("events with no session are gathered per actor", () => {
 test("yarn joins actions, and only where it says something", () => {
   const weave = layoutWeave(weaveSpec(demoEvents()));
   const kinds = weave.links.map((link) => link.kind).sort();
-  assert.deepEqual(kinds, ["cause", "cause", "handoff", "resume"]);
+  // research's and review's summaries are recalled by build, and research's
+  // again by experiment
+  assert.deepEqual(kinds, ["cause", "cause", "handoff", "memory", "memory", "memory", "resume"]);
+  const remembered = weave.links.filter((link) => link.kind === "memory");
+  assert.deepEqual(remembered.map((link) => `${link.from.band.sessionId}>${link.to.band.sessionId}`).sort(),
+    ["research>build", "research>experiment", "review>build"]);
   for (const link of weave.links) assert.notEqual(link.from, link.to);
   const handoff = weave.links.find((link) => link.kind === "handoff");
   assert.equal(handoff.from.band.sessionId, "research");

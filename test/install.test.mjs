@@ -66,8 +66,12 @@ test("install wires Claude, passes doctor, and the installed hook records an eve
   assert.match(installed.output, /install complete/);
   assert.deepEqual(Object.keys(box.settings().hooks), ["SessionStart", "SessionEnd", "PostToolUse", "PostToolUseFailure"]);
 
+  // an opening session is handed the project's memory; every other hook is silent
   const hooked = box.hook(sessionStart);
-  assert.deepEqual(hooked, { status: 0, output: "" }, "a hook must be silent");
+  assert.equal(hooked.status, 0);
+  assert.match(hooked.output, /^Eventloom keeps a memory of what agents did in this project/);
+  const used = box.hook(JSON.stringify({ session_id: "s1", cwd: "/work", hook_event_name: "PostToolUse", tool_name: "Read", tool_input: {} }));
+  assert.deepEqual(used, { status: 0, output: "" }, "a hook must be silent");
   assert.match(box.eventloom(["tail", "--actor", "claude"]).output, /"type":"agent\.session\.started"/);
   assert.equal(box.eventloom(["verify"]).status, 0);
 });

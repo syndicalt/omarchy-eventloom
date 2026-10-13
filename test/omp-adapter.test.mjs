@@ -55,6 +55,31 @@ async function ingestedAfter(count, run) {
   return until(() => (ingested().length >= count ? ingested() : null));
 }
 
+test("a session is briefed once, before its first turn, and names itself to the shell", options, async () => {
+  installStandIn(`[ "$1" = brief ] && { echo "memory for $5 in $7"; exit 0; }\ncat >> '${received}'`);
+  const omp = fakeOmp();
+  eventloomAdapter(omp);
+  const ctx = context("sess-brief");
+  assert.deepEqual(await omp.fire("before_agent_start", {}, ctx), {
+    message: { customType: "eventloom-memory", content: "memory for sess-brief in /work", display: false, attribution: "agent" },
+  });
+  assert.equal(process.env.EVENTLOOM_ACTOR, "omp");
+  assert.equal(process.env.EVENTLOOM_SESSION_ID, "sess-brief");
+  assert.equal(await omp.fire("before_agent_start", {}, ctx), undefined, "once per session");
+
+  // a briefing that fails or says nothing never holds the turn up
+  installStandIn("exit 1");
+  assert.equal(await omp.fire("before_agent_start", {}, context("sess-quiet")), undefined);
+  process.env.EVENTLOOM_MEMORY = "0";
+  installStandIn("echo unwanted");
+  assert.equal(await omp.fire("before_agent_start", {}, context("sess-off")), undefined);
+  delete process.env.EVENTLOOM_MEMORY;
+  // let this session's events land before the next test reads the file
+  installStandIn(`cat >> '${received}'`);
+  omp.fire("session_shutdown", {}, ctx);
+  await until(() => ingested().some((event) => event.payload.reason === "shutdown"));
+});
+
 test("a session with two turns and a tool call is one session, in order", options, async () => {
   const ctx = context("sess-1");
   const events = await ingestedAfter(10, (omp) => {

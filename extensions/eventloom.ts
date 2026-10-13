@@ -1,5 +1,7 @@
 // eventloom adapter for omp. Records session lifecycle, model turns, tool
-// calls and approvals in the Omarchy agent event log.
+// calls and approvals in the Omarchy agent event log, and before a session's
+// first turn hands the agent the project's memory: the summaries agents have
+// recorded there, and how to add one (`eventloom brief`).
 //
 // The event and context shapes below are the subset of omp's extension API
 // this file reads. Nothing here may slow or break the agent: events are
@@ -7,7 +9,7 @@
 // which also keeps them in order. The one exception is shutdown, where
 // whatever is still queued goes to a second process at once.
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { appendFile, mkdir } from "node:fs";
 import path from "node:path";
 
@@ -21,6 +23,7 @@ interface OmpEvents {
   session_start: object;
   session_switch: { reason?: string };
   session_shutdown: object;
+  before_agent_start: object;
   agent_start: object;
   agent_end: object;
   tool_execution_start: { toolCallId: string; toolName: string; args?: unknown };
@@ -29,10 +32,16 @@ interface OmpEvents {
   tool_approval_resolved: { toolCallId: string; toolName: string; approved?: boolean; reason?: string };
 }
 
+// What a before_agent_start handler may return: a message put in front of
+// the agent ahead of the turn, not shown to the user.
+interface InjectedMessage {
+  message: { customType: string; content: string; display: boolean; attribution: "agent" };
+}
+
 interface ExtensionApi {
   on<Name extends keyof OmpEvents>(
     name: Name,
-    handler: (event: OmpEvents[Name], ctx: ExtensionContext) => void,
+    handler: (event: OmpEvents[Name], ctx: ExtensionContext) => void | Promise<InjectedMessage | undefined>,
   ): void;
 }
 
@@ -105,6 +114,23 @@ function ingest(batch: string[], done: () => void): void {
   unrefPipe(child.stderr);
 }
 
+// The briefing for a session that is about to take its first turn. The turn
+// waits for it, so it is given two seconds and no more; on any failure the
+// agent simply starts without one.
+const BRIEF_TIMEOUT_MS = 2000;
+
+function brief(session: string, cwd: string): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      execFile(EVENTLOOM, ["brief", "--actor", "omp", "--session", session, "--cwd", cwd], {
+        timeout: BRIEF_TIMEOUT_MS, maxBuffer: 64 * 1024, encoding: "utf8",
+      }, (err, stdout) => resolve(err ? "" : stdout.trim()));
+    } catch {
+      resolve("");
+    }
+  });
+}
+
 // One writer at a time. Events that arrive while it runs go out together in
 // the next batch, so a burst costs one process and one lock, not one each,
 // and batches are sealed in the order they were queued.
@@ -172,8 +198,21 @@ export default function eventloomAdapter(omp: ExtensionApi): void {
     if (current === sessionId) return;
     if (sessionId !== undefined) emit("agent.session.completed", ctx, { reason: "switch" });
     sessionId = current;
+    // `eventloom note`, typed by the agent in a shell omp starts, finds its
+    // session here.
+    process.env.EVENTLOOM_ACTOR = "omp";
+    process.env.EVENTLOOM_SESSION_ID = current;
     emit(`agent.session.${opening}`, ctx, { reason });
   }
+
+  const briefed = new Set<string>();
+  omp.on("before_agent_start", async (_event, ctx) => {
+    enterSession(ctx, "started", "turn");
+    if (sessionId === undefined || briefed.has(sessionId) || process.env.EVENTLOOM_MEMORY === "0") return undefined;
+    briefed.add(sessionId);
+    const content = await brief(sessionId, ctx.cwd ?? process.cwd());
+    return content ? { message: { customType: "eventloom-memory", content, display: false, attribution: "agent" } } : undefined;
+  });
 
   omp.on("session_start", (_event, ctx) => enterSession(ctx, "started", "start"));
 

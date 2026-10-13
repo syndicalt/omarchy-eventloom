@@ -14,6 +14,7 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { RECALL_TYPE } from "../lib/memory.mjs";
 import { listShardPaths, logDir } from "../lib/paths.mjs";
 import { SHARD_ANCHOR_TYPE, familyOf } from "../lib/vocabulary.mjs";
 
@@ -54,6 +55,9 @@ export function demoEvents() {
   burst(1, "omp", "research", ["rg", "read", "read", "rg", "read", "bash"]);
   burst(4, "omp", "research", ["read", "web", "read", "rg"]);
   add(7.5, "agent.note.added", "omp", "research", { note: "plan" });
+  const planned = add(10.5, "agent.reply.summarized", "omp", "research", {
+    summary: "Compared the two release paths. Chose the staged rollout; the migration script still needs a dry run.", tags: ["release"],
+  });
   burst(8, "omp", "research", ["bash", "read", "bash"]);
   const asked = add(12, "agent.approval.requested", "omp", "research");
   add(13.2, "agent.approval.resolved", "omp", "research", {}, [asked]);
@@ -64,21 +68,29 @@ export function demoEvents() {
   add(14, "agent.session.started", "claude", "review");
   burst(15, "claude", "review", ["read", "read", "grep", "read"]);
   add(18, "agent.note.added", "claude", "review", { note: "findings" });
+  const reviewed = add(19.5, "agent.reply.summarized", "claude", "review", {
+    summary: "Reviewed the rollout plan: the rollback step is missing a health check. Left it for the build session.",
+  });
   add(31, "agent.session.resumed", "claude", "review");
   burst(32, "claude", "review", ["read", "edit", "edit", "bash", "edit"]);
   add(36, "agent.file.mutated", "claude", "review");
   add(42, "agent.session.completed", "claude", "review");
 
   add(20, "agent.session.started", "codex", "build", { correlation_id: "release" }, [handoff]);
+  add(20.2, "agent.memory.recalled", "codex", "build", { recalled: [planned, reviewed], count: 2 });
   add(20.5, "agent.model.started", "codex", "build", { model: "gpt" });
   burst(21, "codex", "build", ["read", "apply_patch", "apply_patch", "test", "apply_patch", "test", "read", "apply_patch"]);
   const tested = burst(26, "codex", "build", ["test", "apply_patch", "test"]);
   burst(30, "codex", "build", ["apply_patch", "test", "bash", "test", "apply_patch", "test"]);
   add(35, "agent.file.mutated", "codex", "build");
   add(38, "agent.git.mutated", "codex", "build");
+  add(41, "agent.reply.summarized", "codex", "build", {
+    summary: "Ran the migration dry run and added the health check to rollback. Tests pass; released.", tags: ["release"],
+  });
   add(43, "agent.session.completed", "codex", "build", { goal_completed: true });
 
   add(29, "agent.session.started", "omp", "experiment", {}, [tested]);
+  add(29.3, "agent.memory.recalled", "omp", "experiment", { recalled: [planned], count: 1 });
   burst(30, "omp", "experiment", ["bash", "read", "bash"]);
   tool(36, "omp", "experiment", "bash", 5200, true);
   add(40, "agent.session.failed", "omp", "experiment");
@@ -302,6 +314,11 @@ export function deriveLinks(stitches) {
       );
       if (receiver) push(stitch.id, receiver.id, "handoff");
     }
+    // A recall names the summaries it handed over: each is a memory thread
+    // from the session that wrote it to the one that read it.
+    if (stitch.type === RECALL_TYPE && Array.isArray(stitch.payload?.recalled)) {
+      for (const remembered of stitch.payload.recalled) push(remembered, stitch.id, "memory");
+    }
     if (stitch.correlation) {
       const previous = byId.get(lastInCorrelation.get(stitch.correlation));
       if (previous && sessionKey(previous) !== key) push(previous.id, stitch.id, "correlation");
@@ -313,13 +330,17 @@ export function deriveLinks(stitches) {
 
 // The payload fields the inspector may show. Everything else in a payload
 // stays in the shard.
-const DETAIL = ["model", "status", "reason", "title", "name", "kind", "fleet_event_type", "to", "from", "exit_code"];
+const DETAIL = ["summary", "tags", "project", "count", "model", "status", "reason", "title", "name", "kind", "fleet_event_type", "to", "from", "exit_code"];
+// A summary is the one field shown whole: it is short by construction, and
+// reading it is the point.
+const WHOLE = new Set(["summary"]);
 
 function detailOf(payload) {
   const detail = {};
   for (const key of DETAIL) {
-    const value = payload?.[key];
-    if (typeof value === "string" && value) detail[key] = value.length > 140 ? value.slice(0, 139) + "…" : value;
+    const listed = payload?.[key];
+    const value = Array.isArray(listed) && listed.every((item) => typeof item === "string") ? listed.join(", ") : listed;
+    if (typeof value === "string" && value) detail[key] = value.length > 140 && !WHOLE.has(key) ? value.slice(0, 139) + "…" : value;
     else if (typeof value === "number" && Number.isFinite(value)) detail[key] = value;
   }
   return detail;

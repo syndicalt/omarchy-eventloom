@@ -582,9 +582,10 @@ function build(spec, known) {
     const colors = link.kind === "handoff" ? [violet, violet.clone().lerp(cream, 0.45), source[TONE.dye]]
       : link.kind === "resume" ? [source[TONE.dye], source[TONE.light], source[TONE.dark]]
       : link.kind === "correlation" ? [new THREE.Color(FIXED.gold), cream, target[TONE.dye]]
+      : link.kind === "memory" ? [new THREE.Color(FIXED.gold), source[TONE.light], new THREE.Color(FIXED.gold)]
       : [source[TONE.dye], target[TONE.dye], cream];
     const seed = hashSeed(link.from.id + ">" + link.to.id);
-    const radius = link.kind === "handoff" ? 0.62 : 0.5;
+    const radius = link.kind === "handoff" ? 0.62 : link.kind === "memory" ? 0.34 : 0.5;
     const yarn = buildYarn(yarnPath(a, b, seed), { radius, colors, seed, shadow: SHADOW });
     const mesh = new THREE.Mesh(yarn.geometry, yarnMaterial);
     const shade = new THREE.Mesh(yarn.shadowGeometry, yarnShadow);
@@ -787,7 +788,7 @@ function esc(value) {
 const STITCH_NAMES = {
   tool: "counted cross stitch", approval: "Algerian eye", model: "French knots", file: "satin stitch",
   git: "feather stitch", handoff: "buttonholed eyelet", resume: "darning", note: "counted cross stitch",
-  other: "counted cross stitch", started: "cast-on hem", completed: "bound-off seam", failed: "frayed edge",
+  memory: "wound bobbin", other: "counted cross stitch", started: "cast-on hem", completed: "bound-off seam", failed: "frayed edge",
 };
 
 function span(ms) {

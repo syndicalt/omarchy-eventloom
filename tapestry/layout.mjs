@@ -255,6 +255,8 @@ export function layoutWeave(spec) {
     if (link.kind === "resume" && Math.abs(to.row - from.row) < 1.6) continue;
     // A shared goal inside one band is already told by the band itself.
     if (link.kind === "correlation" && from.key === to.key) continue;
+    // A session reading its own summaries back, as after a compaction.
+    if (link.kind === "memory" && from.key === to.key) continue;
     const pair = from.id + ">" + to.id;
     if (joined.has(pair)) continue;
     joined.add(pair);

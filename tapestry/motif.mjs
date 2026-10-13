@@ -187,6 +187,18 @@ const designs = {
     for (let i = -2; i <= 2; i++) m.stitches.push([-2.6, i * 0.8, 2.6, i * 0.8, TONE.light, 0]);
     for (let i = -2; i <= 2; i++) m.stitches.push([i * 0.8, -2.6, i * 0.8, 2.6, i % 2 ? TONE.dark : TONE.dye, 0]);
   },
+  // Memory. A summary is a wound bobbin: thread laid by for later, gold at
+  // its core. A recall is the empty eye that thread is drawn through.
+  memory(action, m) {
+    if (action.type === "agent.memory.recalled") {
+      ring(m.stitches, 3.1, 20, TONE.gold, 0);
+      ring(m.stitches, 2.3, 16, TONE.cream);
+      return;
+    }
+    for (let i = 0; i < 4; i++) ring(m.stitches, 3.4 - i * 0.75, 20 - i * 3, i % 2 ? TONE.cream : TONE.gold, i ? FINE : 0, i * 0.4);
+    for (let i = -3; i <= 3; i++) m.stitches.push([-2.4, i * 0.7, 2.4, i * 0.7 + 0.35, i % 2 ? TONE.light : TONE.dye, FINE]);
+    m.knots.push([0, 0, TONE.gold, 0.7]);
+  },
   // Notes and anything unrecognised: a small counted glyph keyed by subtype.
   note(action, m, rand) {
     crossStitch(m.stitches, glyph(action.glyph, 5), { rand, failed: !action.ok });
