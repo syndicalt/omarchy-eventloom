@@ -360,3 +360,13 @@ Prototype. Known limits:
   inside a running omp. The Claude hook is tested through the installed
   script with inputs written from Claude Code's hook reference.
 - No adapters yet for Codex, Grok or opencode.
+
+## Roadmap
+
+- **Summaries written by a local model.** Today an agent writes its own
+  summaries, which costs it tokens and depends on it doing so. A small model
+  run on the CPU (around a billion parameters, a few hundred megabytes,
+  downloaded at install) could summarize every reply in the background at no
+  token cost, with `eventloom note` kept for what an agent or a person wants
+  to record deliberately. Open: which model is good enough at that size, and
+  how to ship a runtime for it.
