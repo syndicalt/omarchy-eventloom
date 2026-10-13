@@ -4,7 +4,10 @@ One local log of what the AI agents on your machine did.
 
 Eventloom is an Omarchy plugin that records, in a single append-only file per
 day, every session your coding agents start and finish, every tool they call,
-every approval they ask for, and how each ended. It captures omp and Claude
+every approval they ask for, and how each ended. Beside that it keeps a
+memory: short summaries the agents write of their own replies, filed by
+project and handed to the next session that opens there, whichever agent it
+is. It captures omp and Claude
 Code out of the box, and anything else can write to it with one command. The
 log never leaves the machine, is redacted before anything is written, and is
 hash-chained, so a line that was edited or removed afterwards shows up.
@@ -124,6 +127,38 @@ eventloom path                          # today's shard
 `omarchy-eventloom` and `omarchy-eventloom-inspect` are aliases for
 `eventloom` and `eventloom doctor`.
 
+## Memory
+
+A list of tool calls says that something happened, not what it was for. So
+agents are asked to say: after a reply that changed, decided or found
+something, the agent records one to three sentences about it.
+
+```sh
+eventloom note --tags release <<'EOF'
+Ran the migration dry run and added the health check to rollback. Tests pass.
+EOF
+
+eventloom recall                 # what was recorded for this project (git repository, or directory)
+eventloom recall --tag release   # narrowed by tag; also --correlation <id>, --all, --limit, --days, --json
+```
+
+- **Written by the agent.** When a session opens, the adapter tells the agent
+  how to record a summary and gives it the last 8 recorded for the project.
+  Claude Code receives this through its SessionStart hook, omp before the
+  session's first turn. Whether a summary gets written is then up to the
+  agent: nothing forces it, and some replies will go unrecorded.
+- **Shared across agents.** A summary belongs to a project, not to the agent
+  that wrote it, so omp starts from what Claude left and the reverse.
+- **Recall is recorded too.** Each time summaries are handed to a session an
+  `agent.memory.recalled` event names them. That is what makes a memory
+  thread: the Tapestry draws a gold thread from each summary to every session
+  that read it.
+- **Bounded.** A summary is at most 600 characters; longer text is refused so
+  the agent shortens it. It is read from standard input, never from the
+  command line, and is redacted like everything else.
+- **Optional.** `EVENTLOOM_MEMORY=0` stops the briefing and the request for
+  summaries. `EVENTLOOM_MODE=metadata` keeps no content, so it does too.
+
 ## Events
 
 | Type | Meaning | Emitted by |
@@ -133,6 +168,8 @@ eventloom path                          # today's shard
 | `agent.tool.started` / `completed` / `failed` | tool calls; inputs as argument names only | omp, claude (no `started`) |
 | `agent.approval.requested` / `resolved` | human-in-the-loop | omp |
 | `agent.note.added` | free-form annotation | `eventloom append` |
+| `agent.reply.summarized` | an agent's summary of its reply, with `project` and `tags` | `eventloom note` |
+| `agent.memory.recalled` | summaries handed to a session, by id | `eventloom recall`, session start |
 | `eventloom.shard.anchored` | opens a shard; links it to the previous one | the store |
 | `eventloom.shard.acknowledged` | a shard was recovered or purged on purpose | `recover`, `purge` |
 
@@ -171,10 +208,14 @@ reports it.
 
 ## Privacy
 
-- The bundled adapters record what happened, not what was said: tool names
-  and argument names, never arguments, output or prompts. Content only
-  enters the log through `eventloom append`, a third-party `ingest`, or an
-  error message.
+- Of what an agent does, the bundled adapters record tool names and argument
+  names, never arguments, output or prompts. Of what it says, they record
+  only the summary the agent itself chooses to write (see Memory): a few
+  sentences, not the reply. Other content enters the log only through
+  `eventloom append`, a third-party `ingest`, or an error message.
+- A summary is content. It is redacted like any other text, which is best
+  effort (below), it is shown in the Tapestry, and it is given to later
+  sessions in the same project. Set `EVENTLOOM_MEMORY=0` to do without.
 - Everything is redacted before sealing, because a sealed event cannot be
   edited. In a structured payload this is exact: every string or number under
   a secret-named key (`password`, `*_token`, `*_API_KEY`,
