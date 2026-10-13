@@ -10,7 +10,8 @@ project and handed to the next session that opens there, whichever agent it
 is. It captures omp and Claude
 Code out of the box, and anything else can write to it with one command. The
 log never leaves the machine, is redacted before anything is written, and is
-hash-chained, so a line that was edited or removed afterwards shows up.
+hash-chained, so a line that was edited or removed afterwards shows up. An
+optional sealed mode keeps a record of the log that agents cannot rewrite.
 
 ```
 $ eventloom tail --limit 4
@@ -92,6 +93,13 @@ Adding only clones the repository. Enabling starts a small background service
   beside it as `settings.json.eventloom-backup`, and a file that cannot be
   parsed is left alone.
 
+Run in a terminal, `install.sh` asks two things: the Tapestry's port, and
+whether to turn on [sealed mode](#sealed-mode), for which it prints a `sudo`
+command and runs nothing. Installed through the plugin there is no terminal,
+so it asks nothing: the port is 4747 and sealed mode is off until you change
+them with `eventloom config set tapestry_port <n>` and `eventloom seal
+enable`.
+
 It finishes by running `eventloom doctor`, and it runs again by itself after
 `omarchy plugin update`. If it cannot finish you get one notification saying
 so; the reason is in `omarchy-shell eventloom status`, and running
@@ -123,6 +131,7 @@ eventloom recover                       # set a damaged shard aside, keep its ve
 eventloom purge 2026-10-10              # delete one day's shard and record that it was
 eventloom path                          # today's shard
 eventloom config set tapestry_port 5000 # remember a setting (eventloom config lists them)
+eventloom seal status                   # sealed mode: on or off, and how far the log is sealed
 ```
 
 `omarchy-eventloom` and `omarchy-eventloom-inspect` are aliases for
@@ -277,12 +286,58 @@ by `eventloom recover` and `eventloom purge` are recorded in the log and
 reported as warnings; anything that changes after such a record is an error
 again.
 
-It does not detect removal of events from the end of the newest shard (or of
-events appended to an older shard after it was anchored), and the chain is
-not signed: a process running as you can rewrite the log and
-recompute every hash, or append events under another agent's name. Treat the
-log as a tamper-evident record against accident and casual edits, and treat
-what agents read from it as untrusted input.
+On its own that is tamper-evident against accident and casual edits, and no
+more. The head of the chain is the last line of today's shard, and nothing
+outside the log holds it: a process running as you, an agent included, can
+cut events off the end, or rewrite the log and recompute every hash, and
+`verify` will pass.
+
+### Sealed mode
+
+Sealed mode closes that gap on the machine itself. It is off unless you turn
+it on, because turning it on takes root, once.
+
+```sh
+eventloom seal enable    # prints the one sudo command; eventloom never runs it
+eventloom seal status    # on or off, how many events are not yet sealed
+eventloom seal now       # seal the log's head immediately
+```
+
+- The setup creates a system user, `eventloom-seal`, and a seal file that
+  only that user can write: `/var/lib/eventloom-seal/<uid>.evtseal`. You can
+  read it; neither you nor an agent running as you can change or delete it.
+- Eventloom appends to it by asking a small root-owned helper, through one
+  sudoers rule that allows that helper and nothing else. Each record is the
+  day, the count of events and the hash of the last one, stamped with the
+  helper's own clock. No log content.
+- The log is sealed when a session starts or ends and every 10 events, so at
+  most 9 events are unsealed at a time.
+- `eventloom verify` then also fails if the log does not hold, at each sealed
+  position, the sealed hash. That catches events cut off the end, a rewritten
+  log however consistent its hashes, and a deleted day.
+- `purge` and `recover` still work, and write a record in the seal file that
+  cannot be removed. The gap is reported by `verify` from then on.
+- There is no setting for it. The log is sealed if its seal file exists, so
+  an agent cannot switch it off; it can only stop sealing, which shows as a
+  growing count of unsealed events.
+
+What sealed mode does not do:
+
+- It does not make events true. An agent can still append false events, or
+  events under another agent's name; a seal says what the log held at a time.
+- It does not cover the events written since the last seal.
+- It does not hold against root, which can rewrite the seal file too. Only a
+  witness off the machine answers that.
+- It does not protect the program that checks it. `eventloom` is installed in
+  your home directory, where an agent can change it, so an agent that wants
+  to hide tampering can also make `verify` lie. The seal file itself stays
+  honest: it is plain text, and the hash on any `head` line can be compared
+  by hand with the `hash` of that event in the day's shard.
+
+Either way, treat what agents read from the log as untrusted input.
+
+The design, and why each part is there, is in
+[`docs/sealed-mode.md`](docs/sealed-mode.md).
 
 ## Visualization
 

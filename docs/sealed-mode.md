@@ -1,7 +1,7 @@
 # Sealed mode and installer settings: design
 
-Status: design, not built. Two changes that share the installer work: an
-opt-in sealed mode, and a persistent setting for the tapestry's port.
+Status: built. Two changes that share the installer work: an opt-in sealed
+mode, and a persistent setting for the tapestry's port.
 
 ## Sealed mode
 
@@ -53,12 +53,15 @@ caller cannot, and writes only that user's file.
 Text, one record a line, so it can be read and searched with ordinary tools.
 
 ```
-eventloom-seal 1 uid=1000
+eventloom-seal 1 uid=1000 log=/home/me/.local/state/omarchy/agents/logs
 1 2026-10-13T12:45:22Z head 2026-10-13 412 sha256:<event hash> sha256:<link>
 2 2026-10-13T12:51:07Z ack 2026-10-11 0 purged sha256:<link>
 ```
 
-- The first line names the format and its version.
+- The first line names the format, its version, and the log directory the
+  seal is of. Eventloom seals to it and verifies against it only when that is
+  the directory its log is in, so a log kept elsewhere by `EVENTLOOM_LOG_DIR`
+  (a test's, a sandbox's) never touches the seal.
 - Fields: sequence number, time, kind, shard day, position (the count of
   events in that shard), then the hash of the event at that position for a
   `head`, or what was done for an `ack`.
@@ -125,12 +128,21 @@ stop sealing, which shows as a growing count of unsealed events.
   the rule. The seal file is kept unless `--purge` is given; the log then
   verifies as an unsealed log does today.
 
+### Who checks the checker
+
+`eventloom verify` runs from the owner's home directory, which an agent can
+write. An agent set on hiding tampering can change the verifier as easily as
+the log. Sealed mode does not prevent that; it guarantees that the evidence
+survives. The seal file is plain text and each `head` can be compared by hand
+with the shard, or by a copy of eventloom the agent has not touched.
+
 ### Costs and open points
 
 - The marketplace's scan will report a privilege request, correctly, and the
   update will need a closer review.
-- Not yet measured: the time one `sudo` call adds, and how the sudoers rule
-  behaves on Omarchy.
+- Measured on Omarchy (sudo 1.9.17): `sudo` adds about 11 ms to a call, a
+  seal takes about 36 ms in all, and each writes three lines to the system
+  journal. At a seal every 10 events that is a few dozen seals on a busy day.
 - A socket-activated systemd service running as the seal user could replace
   `sudo` and its auth-log lines. To be considered only if `sudo` proves too
   slow or too noisy.

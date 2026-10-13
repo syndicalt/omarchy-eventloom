@@ -31,6 +31,11 @@ else
   rm -f "$HOME/.claude/hooks/eventloom-hook.sh"
 fi
 
+# Sealed mode was set up as root and is not undone from here.
+if [ -x "$BIN_DIR/eventloom" ] && "$BIN_DIR/eventloom" seal status 2>/dev/null | grep -q '^sealed mode is on'; then
+  say "sealed mode is still set up. To remove it: sudo sh $(cd "$(dirname "$0")" && pwd)/seal/setup.sh --remove"
+fi
+
 rm -f "$HOME/.omp/agent/extensions/eventloom.ts"
 rm -rf "$LIB_DIR"
 rm -f "$BIN_DIR/eventloom" "$BIN_DIR/omarchy-eventloom" "$BIN_DIR/omarchy-eventloom-inspect"

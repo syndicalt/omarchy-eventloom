@@ -22,7 +22,7 @@ function helper(t, { setUp = true } = {}) {
   writeFileSync(script, readFileSync(SOURCE, "utf8").replace(/^SEAL_DIR=.*$/m, `SEAL_DIR=${dir}`));
   chmodSync(script, 0o755);
   const file = path.join(dir, `${UID}.evtseal`);
-  if (setUp) writeFileSync(file, `eventloom-seal 1 uid=${UID}\n`);
+  if (setUp) writeFileSync(file, `eventloom-seal 1 uid=${UID} log=/home/me/logs\n`);
   const run = (...args) => {
     const result = spawnSync(script, args, { encoding: "utf8", env: { PATH: "/nonexistent" } });
     return { status: result.status, stdout: result.stdout.trim(), stderr: result.stderr.trim() };

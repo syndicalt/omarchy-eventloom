@@ -2,6 +2,7 @@
 # Turns sealed mode on, or off, for one user. Run as root, by hand:
 #
 #   sudo sh seal/setup.sh              seal the log of the user who ran sudo
+#   sudo sh seal/setup.sh --log-dir <path>   when the log is not in its usual place
 #   sudo sh seal/setup.sh --remove     take the helper and the rule away again
 #   sudo sh seal/setup.sh --remove --purge   and delete the seal files
 #
@@ -49,7 +50,20 @@ if [ "${1:-}" = --remove ]; then
   fi
   exit 0
 fi
-[ "$#" -eq 0 ] || die "usage: setup.sh [--remove [--purge]]"
+# A seal is of one log directory, named in the seal file's first line. A log
+# kept anywhere else is neither sealed by it nor checked against it.
+home="$(getent passwd "$owner" | cut -d: -f6)"
+log_dir="$home/.local/state/omarchy/agents/logs"
+if [ "${1:-}" = --log-dir ] && [ "$#" -eq 2 ]; then
+  log_dir="$2"
+elif [ "$#" -ne 0 ]; then
+  die "usage: setup.sh [--log-dir <path> | --remove [--purge]]"
+fi
+case "$log_dir" in
+  /*) ;;
+  *) die "the log directory must be an absolute path: $log_dir" ;;
+esac
+[ "$(printf '%s' "$log_dir" | wc -l)" -eq 0 ] || die "the log directory cannot hold a line break"
 
 if ! id "$SEAL_USER" >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir "$SEAL_DIR" --shell /usr/bin/nologin "$SEAL_USER"
@@ -64,8 +78,10 @@ say "installed $HELPER"
 # and may not list it.
 install -d -o "$SEAL_USER" -g root -m 0711 "$SEAL_DIR"
 if [ ! -e "$file" ]; then
-  printf 'eventloom-seal %s uid=%s\n' "$("$HELPER" version)" "$uid" >"$file"
-  say "created $file"
+  printf 'eventloom-seal %s uid=%s log=%s\n' "$("$HELPER" version)" "$uid" "$log_dir" >"$file"
+  say "created $file, the seal of $log_dir"
+elif ! head -n 1 "$file" | grep -Fqx "eventloom-seal $("$HELPER" version) uid=$uid log=$log_dir"; then
+  die "$file already exists and is the seal of something else: $(head -n 1 "$file"). To start again: setup.sh --remove --purge"
 fi
 chown "$SEAL_USER:$group" "$file"
 chmod 0640 "$file"
