@@ -93,7 +93,8 @@ Adding only clones the repository. Enabling starts a small background service
   parsed is left alone.
 
 It finishes by running `eventloom doctor`, and it runs again by itself after
-`omarchy plugin update`. If it cannot finish you get one notification saying
+`omarchy plugin update`, once the shell has restarted (or at once with
+`omarchy-shell eventloom install`). If it cannot finish you get one notification saying
 so; the reason is in `omarchy-shell eventloom status`, and running
 `install.sh` in a terminal shows it in full. Notifications never quote what
 went wrong, because the text of a notification can be read by other users of
@@ -371,3 +372,8 @@ Prototype. Known limits:
   token cost, with `eventloom note` kept for what an agent or a person wants
   to record deliberately. Open: which model is good enough at that size, and
   how to ship a runtime for it.
+- **Reinstall after `omarchy plugin update` without a shell restart.** The
+  service installs when it loads, and an update does not reload it, so the
+  CLI and adapters stay on the old version until the shell restarts or
+  `omarchy-shell eventloom install` is run. The service should notice a
+  changed checkout by itself.
