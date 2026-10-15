@@ -47,9 +47,9 @@ questions come up that nothing answers well:
 
 It is mostly a record of *what happened*, not *what was said*. Of an agent's
 work the bundled adapters log tool names and argument names, never
-arguments, output or prompts. The one piece of content is the summary an
-agent chooses to write of a reply (see [Memory](#memory)), which is what
-makes the rest readable. See [Privacy](#privacy).
+arguments, output or prompts. The one piece of content, if you turn memory
+on, is the summary an agent chooses to write of a reply (see
+[Memory](#memory)), which is what makes the rest readable. See [Privacy](#privacy).
 
 ## How it works
 
@@ -63,9 +63,9 @@ makes the rest readable. See [Privacy](#privacy).
 ```
 
 - **Adapters** sit outside the agents and use their official extension
-  points: an omp extension and Claude Code hooks. They put one thing in
-  front of the agent, the memory briefing when a session opens, and
-  otherwise stay silent; a failure never stops the agent.
+  points: an omp extension and Claude Code hooks. With memory on they
+  put one thing in front of the agent, the briefing when a session opens;
+  otherwise they stay silent, and a failure never stops the agent.
 - **The CLI** is the only writer. It adds where a session ran (host, Omarchy
   release, git branch and commit), redacts, and hands the event to
   [@eventloom/runtime](https://github.com/syndicalt/eventloom), which seals it
@@ -207,7 +207,8 @@ correlates only with itself.
   goes to a second process at once, so recording never keeps omp waiting;
   those last events can be sealed out of order, and `occurred_at` gives the
   true one. The one wait is the briefing before a session's first turn,
-  which is given two seconds and then abandoned.
+  which is given two seconds and then abandoned (with memory off it returns
+  at once, empty).
 - **claude** — `hooks/eventloom-hook.sh`, registered in
   `~/.claude/settings.json` for `SessionStart`, `SessionEnd`, `PostToolUse` and
   `PostToolUseFailure`. `settings.json` is never rewritten if it cannot be
@@ -219,7 +220,8 @@ extension API, not a proxy), pipe them to `eventloom ingest` as one
 `{"type","actor","thread","payload"}` object per line, and add an entry to
 `lib/adapters.json` so `eventloom doctor` checks it.
 
-Apart from the briefing, adapters print nothing into a session. A failed
+Apart from the briefing when memory is on, adapters print nothing into a
+session. A failed
 write goes to
 `~/.local/state/omarchy/agents/eventloom-errors.log`, and `eventloom doctor`
 reports it.
