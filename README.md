@@ -5,9 +5,9 @@ One local log of what the AI agents on your machine did.
 Eventloom is an Omarchy plugin that records, in a single append-only file per
 day, every session your coding agents start and finish, every tool they call,
 every approval they ask for, and how each ended. Beside that it keeps a
-memory: short summaries the agents write of their own replies, filed by
-project and handed to the next session that opens there, whichever agent it
-is. It captures omp and Claude
+memory, if you turn it on: short summaries the agents write of their own
+replies, filed by project and handed to the next session that opens there,
+whichever agent it is. It captures omp and Claude
 Code out of the box, and anything else can write to it with one command. The
 log never leaves the machine, is redacted before anything is written, and is
 hash-chained, so a line that was edited or removed afterwards shows up.
@@ -131,8 +131,16 @@ eventloom config set tapestry_port 5000 # remember a setting (eventloom config l
 ## Memory
 
 A list of tool calls says that something happened, not what it was for. So
-agents are asked to say: after a reply that changed, decided or found
+agents can be asked to say: after a reply that changed, decided or found
 something, the agent records one to three sentences about it.
+
+Memory is off until you turn it on, because it changes what your agents are
+told: every new session is given instructions and the words of earlier
+sessions. `install.sh` asks when it runs in a terminal; otherwise:
+
+```sh
+eventloom config set memory on    # or off; eventloom doctor shows which
+```
 
 ```sh
 eventloom note --tags release <<'EOF'
@@ -158,8 +166,10 @@ eventloom recall --tag release   # narrowed by tag; also --correlation <id>, --a
 - **Bounded.** A summary is at most 600 characters; longer text is refused so
   the agent shortens it. It is read from standard input, never from the
   command line, and is redacted like everything else.
-- **Optional.** `EVENTLOOM_MEMORY=0` stops the briefing and the request for
-  summaries. `EVENTLOOM_MODE=metadata` keeps no content, so it does too.
+- **Your choice.** With memory off, sessions are neither briefed nor asked
+  for summaries; `eventloom note` and `recall` still work when you use them
+  yourself. `EVENTLOOM_MEMORY=1` or `0` overrides the setting for one
+  process, and `EVENTLOOM_MODE=metadata` keeps no content, so no memory.
 
 ## Events
 
@@ -212,12 +222,12 @@ reports it.
 
 - Of what an agent does, the bundled adapters record tool names and argument
   names, never arguments, output or prompts. Of what it says, they record
-  only the summary the agent itself chooses to write (see Memory): a few
-  sentences, not the reply. Other content enters the log only through
+  only the summary the agent itself chooses to write when memory is on (see
+  Memory): a few sentences, not the reply. Other content enters the log only through
   `eventloom append`, a third-party `ingest`, or an error message.
 - A summary is content. It is redacted like any other text, which is best
   effort (below), it is shown in the Tapestry, and it is given to later
-  sessions in the same project. Set `EVENTLOOM_MEMORY=0` to do without.
+  sessions in the same project. Memory is off unless you turn it on.
 - Everything is redacted before sealing, because a sealed event cannot be
   edited. In a structured payload this is exact: every string or number under
   a secret-named key (`password`, `*_token`, `*_API_KEY`,

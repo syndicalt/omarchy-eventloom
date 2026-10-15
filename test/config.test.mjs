@@ -57,7 +57,11 @@ function sandbox(t) {
 
 test("eventloom config lists, reads and changes settings", (t) => {
   const { run, config, home } = sandbox(t);
-  assert.equal(run(["config"]).stdout, "tapestry_port=4747  # where the Tapestry is served\n");
+  assert.equal(run(["config"]).stdout, [
+    "tapestry_port=4747  # where the Tapestry is served",
+    "memory=off  # brief new sessions with the project's summaries, and ask agents to add to them",
+    "",
+  ].join("\n"));
   assert.equal(existsSync(config), false, "reading creates nothing");
   assert.equal(run(["config", "set", "tapestry_port", "5050"]).stdout, "tapestry_port=5050\n");
   assert.equal(run(["config", "get", "tapestry_port"]).stdout, "5050\n");
@@ -68,7 +72,7 @@ test("eventloom config lists, reads and changes settings", (t) => {
 
   for (const [args, message] of [
     [["config", "set", "tapestry_port", "80"], /a port is a whole number from 1024 to 65535 \(got "80"\)/],
-    [["config", "get", "nope"], /"nope" is not a setting \(there is: tapestry_port\)/],
+    [["config", "get", "nope"], /"nope" is not a setting \(there are: tapestry_port, memory\)/],
     [["config", "set", "tapestry_port"], /usage: eventloom config/],
     [["config", "unset", "tapestry_port"], /usage: eventloom config/],
   ]) {

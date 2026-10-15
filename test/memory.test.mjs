@@ -102,8 +102,32 @@ test("what is not a summary is refused, and metadata mode keeps none", (t) => {
   assert.deepEqual(events(), []);
 });
 
+test("memory is off until the owner turns it on", (t) => {
+  const { projects, run, events, as } = sandbox(t);
+  const hook = (env) => run(["claude-hook"], {
+    input: JSON.stringify({ session_id: "c1", cwd: projects.loom, hook_event_name: "SessionStart", source: "startup" }), env,
+  });
+  run(["note", "--cwd", projects.loom], { input: "Chose the staged rollout.", env: as("omp", "s1") });
+
+  assert.equal(hook().stdout, "", "a fresh install briefs no one");
+  assert.equal(run(["brief", "--actor", "omp", "--session", "s7", "--cwd", projects.loom]).stdout, "");
+  assert.equal(events().some((event) => event.type === "agent.memory.recalled"), false);
+  assert.match(run(["doctor"]).stdout, /ok +memory +off \(turn it on with: eventloom config set memory on\)/);
+  // the owner can still read and write it by hand
+  assert.match(run(["recall", "--cwd", projects.loom]).stdout, /Chose the staged rollout/);
+
+  assert.equal(run(["config", "set", "memory", "on"]).status, 0);
+  assert.match(hook().stdout, /Chose the staged rollout/);
+  assert.match(run(["doctor"]).stdout, /ok +memory +on: new sessions are briefed/);
+  assert.equal(hook({ EVENTLOOM_MEMORY: "0" }).stdout, "", "the environment overrides it for one process");
+  run(["config", "set", "memory", "off"]);
+  assert.match(hook({ EVENTLOOM_MEMORY: "1" }).stdout, /Chose the staged rollout/);
+  assert.match(run(["config", "set", "memory", "yes"]).stderr, /the value is on or off \(got "yes"\)/);
+});
+
 test("a session is briefed as it opens, and only then", (t) => {
   const { projects, run, events, as } = sandbox(t);
+  run(["config", "set", "memory", "on"]);
   const hook = (input, env) => run(["claude-hook"], { input: JSON.stringify({ session_id: "c1", cwd: projects.loom, ...input }), env });
   const opening = { hook_event_name: "SessionStart", source: "startup" };
 
@@ -133,6 +157,7 @@ test("a session is briefed as it opens, and only then", (t) => {
 
 test("a long memory is briefed as its first summary and its latest eight", (t) => {
   const { projects, run, events, as } = sandbox(t);
+  run(["config", "set", "memory", "on"]);
   const ids = [];
   for (let i = 1; i <= 11; i++) {
     ids.push(JSON.parse(run(["note", "--cwd", projects.loom], { input: `summary number ${i}.`, env: as("omp", "s1") }).stdout).id);

@@ -1,7 +1,8 @@
 // eventloom adapter for omp. Records session lifecycle, model turns, tool
 // calls and approvals in the Omarchy agent event log, and before a session's
-// first turn hands the agent the project's memory: the summaries agents have
-// recorded there, and how to add one (`eventloom brief`).
+// first turn hands the agent the project's memory, if the owner turned it on:
+// the summaries agents have recorded there, and how to add one
+// (`eventloom brief`, which says nothing when memory is off).
 //
 // The event and context shapes below are the subset of omp's extension API
 // this file reads. Nothing here may slow or break the agent: events are
