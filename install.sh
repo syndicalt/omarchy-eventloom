@@ -77,7 +77,21 @@ if [ -d "$HOME/.claude" ]; then
   say "claude adapter registered in ~/.claude/settings.json"
 fi
 
-# --- 6. the install is done when doctor says the log works --------------------
+# --- 6. settings, when there is someone to ask ---------------------------------
+# The Omarchy plugin runs this with no terminal; nothing is asked then, and
+# `eventloom config set` changes a setting later.
+if [ -t 0 ] && [ -t 1 ]; then
+  port="$("$BIN_DIR/eventloom" config get tapestry_port)" || die "the settings file is not usable, see above"
+  printf '  Tapestry port [%s]: ' "$port"
+  read -r answer || answer=""
+  if [ -n "$answer" ] && [ "$answer" != "$port" ]; then
+    "$BIN_DIR/eventloom" config set tapestry_port "$answer" >/dev/null \
+      && say "the Tapestry will be served on port $answer" \
+      || say "kept port $port (change it with: eventloom config set tapestry_port <n>)"
+  fi
+fi
+
+# --- 7. the install is done when doctor says the log works --------------------
 "$BIN_DIR/eventloom" doctor || die "doctor reported a failure above; the install is incomplete"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

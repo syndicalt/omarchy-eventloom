@@ -1,6 +1,8 @@
 // tapestry server — reads eventloom shards, serves the weave-spec + three.js app.
 // Read-only projection: the sealed log is never touched.
-//   eventloom tapestry [--port 4747] [--days N|all] [--correlation <goal-id>]
+//   eventloom tapestry [--port N] [--days N|all] [--correlation <goal-id>]
+// The port is --port, else EVENTLOOM_TAPESTRY_PORT, else the tapestry_port
+// setting, else 4747.
 // How much of the log is woven is the page's to say: /?days=N weaves the last
 // N daily shards, and without a days parameter the whole log. --days only
 // sets the number in the address this prints.
@@ -15,7 +17,8 @@ import { createRequire } from "node:module";
 import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { RECALL_TYPE } from "../lib/memory.mjs";
-import { listShardPaths, logDir } from "../lib/paths.mjs";
+import { tapestryPort } from "../lib/config.mjs";
+import { launchPagePath, listShardPaths } from "../lib/paths.mjs";
 import { SHARD_ANCHOR_TYPE, familyOf } from "../lib/vocabulary.mjs";
 
 // Shard bookkeeping, not agent work: never woven.
@@ -455,12 +458,6 @@ export function launchUrl({ port, days, correlation }) {
   return `http://127.0.0.1:${port}/${text ? `?${text}` : ""}`;
 }
 
-// Where the page that opens this port's Tapestry is kept: beside the log, in
-// a directory only its owner can enter.
-export function launchPagePath(port) {
-  return path.join(path.dirname(logDir()), "tapestry", `launch-${port}.html`);
-}
-
 // The key must not appear anywhere another user can look. An address given to
 // `xdg-open` or a browser shows in the process list, so the address is never
 // handed over directly: this page, mode 0600, carries it and sends the
@@ -489,7 +486,7 @@ function carriesKey(req, key) {
 }
 
 export function main(argv) {
-  let port = 4747, days = 7, demo = false, correlation = null;
+  let port, days = 7, demo = false, correlation = null;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--demo") demo = true;
@@ -505,6 +502,11 @@ export function main(argv) {
       correlation = argv[++i] || null;
       if (!correlation) return usage("--correlation needs a goal id");
     } else return usage(`unknown option ${arg}`);
+  }
+  try {
+    port = tapestryPort({ flag: port });
+  } catch (err) {
+    return usage(err.message);
   }
   const ASSETS = loadAssets();
   const accessKey = randomBytes(32).toString("base64url");

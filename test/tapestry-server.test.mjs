@@ -4,7 +4,8 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
-import { deriveLinks, demoEvents, launchPagePath, launchUrl, main, requestedDays, weaveSpec } from "../tapestry/server.mjs";
+import { launchPagePath } from "../lib/paths.mjs";
+import { deriveLinks, demoEvents, launchUrl, main, requestedDays, weaveSpec } from "../tapestry/server.mjs";
 
 test("links follow cause, handoff, resume and shared goals", () => {
   const stitch = (id, minutes, extra = {}) => ({

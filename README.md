@@ -125,6 +125,7 @@ eventloom doctor                        # log health and adapter wiring
 eventloom recover                       # set a damaged shard aside, keep its verified prefix
 eventloom purge 2026-10-10              # delete one day's shard and record that it was
 eventloom path                          # today's shard
+eventloom config set tapestry_port 5000 # remember a setting (eventloom config lists them)
 ```
 
 `omarchy-eventloom` and `omarchy-eventloom-inspect` are aliases for
@@ -304,6 +305,12 @@ the network. It prints the path of a page to open, which leads to
 http://127.0.0.1:4747/?days=7 and weaves the last 7 days of the log. Change
 the number in the address for more or fewer days, or remove `days` to weave
 the whole log (`--days N` or `--days all` sets what the address starts with).
+
+The port is 4747 unless you choose another. `eventloom config set
+tapestry_port <n>` remembers one (1024 to 65535) in
+`~/.config/eventloom/config`, and `install.sh` asks for it when run in a
+terminal. `--port` or `EVENTLOOM_TAPESTRY_PORT` override it for one run.
+`eventloom doctor` reports the port and whether another program holds it.
 
 The Tapestry shows the log only to the user who started it. A local port can
 be reached by every user of the machine, so the server answers for the log

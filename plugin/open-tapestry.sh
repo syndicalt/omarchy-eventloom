@@ -10,8 +10,11 @@
 # same reason the key is handed to curl on stdin here, never as an argument.
 set -eu
 
-PORT="${EVENTLOOM_TAPESTRY_PORT:-4747}"
 EVENTLOOM="$HOME/.local/bin/eventloom"
+[ -x "$EVENTLOOM" ] || { echo "eventloom is not installed" >&2; exit 1; }
+# The port the owner chose (eventloom config set tapestry_port <n>), unless
+# the environment names another for this once.
+PORT="${EVENTLOOM_TAPESTRY_PORT:-$("$EVENTLOOM" config get tapestry_port)}"
 LOG_DIR="${EVENTLOOM_LOG_DIR:-$HOME/.local/state/omarchy/agents/logs}"
 LAUNCH="$(dirname "$LOG_DIR")/tapestry/launch-$PORT.html"
 
@@ -26,10 +29,9 @@ ours() {
 }
 answering() { curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$PORT/"; }
 
-[ -x "$EVENTLOOM" ] || { echo "eventloom is not installed" >&2; exit 1; }
 if ! ours; then
   if answering; then
-    echo "port $PORT is held by a server this cannot use (an older tapestry, or something else); stop it, or set EVENTLOOM_TAPESTRY_PORT" >&2
+    echo "port $PORT is held by a server this cannot use (an older tapestry, or something else); stop it, or choose another: eventloom config set tapestry_port <n>" >&2
     exit 1
   fi
   nohup "$EVENTLOOM" tapestry --port "$PORT" >/dev/null 2>&1 &
