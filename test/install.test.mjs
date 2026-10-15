@@ -66,7 +66,10 @@ test("install wires Claude, passes doctor, and the installed hook records an eve
   assert.match(installed.output, /install complete/);
   assert.deepEqual(Object.keys(box.settings().hooks), ["SessionStart", "SessionEnd", "PostToolUse", "PostToolUseFailure"]);
 
-  // an opening session is handed the project's memory; every other hook is silent
+  // memory is off after install: an opening session is told nothing
+  assert.deepEqual(box.hook(sessionStart), { status: 0, output: "" });
+  // turned on, an opening session is handed the project's memory; every other hook stays silent
+  box.eventloom(["config", "set", "memory", "on"]);
   const hooked = box.hook(sessionStart);
   assert.equal(hooked.status, 0);
   assert.match(hooked.output, /^Eventloom keeps a memory of what agents did in this project/);
@@ -267,11 +270,14 @@ test("in a terminal the installer asks for the Tapestry port; without one it ask
   assert.equal(silent.status, 0, silent.output);
   assert.doesNotMatch(silent.output, /Tapestry port/);
 
-  const chosen = inTerminal("5151");
+  const chosen = inTerminal("5151\ny");
   assert.equal(chosen.status, 0, chosen.stdout);
   assert.match(chosen.stdout, /Tapestry port \[4747\]: /);
   assert.match(chosen.stdout, /the Tapestry will be served on port 5151/);
   assert.equal(port(), "5151");
+  assert.match(chosen.stdout, /Turn on shared memory\? [^\n]*\n[^\n]*\[y\/N\]: /);
+  assert.match(chosen.stdout, /memory is on/);
+  assert.equal(box.eventloom(["config", "get", "memory"]).output.trim(), "on");
 
   const kept = inTerminal("");
   assert.match(kept.stdout, /Tapestry port \[5151\]: /);
@@ -280,7 +286,7 @@ test("in a terminal the installer asks for the Tapestry port; without one it ask
   // sealed mode is offered, explained when accepted, and never set up from here
   assert.match(kept.stdout, /Enable sealed mode\? .* \[y\/N\]: /);
   assert.match(kept.stdout, /sealed mode left off \(turn it on later with: eventloom seal enable\)/);
-  const wanted = inTerminal("\ny");
+  const wanted = inTerminal("\ny"); // port as it is, then sealed mode yes (memory is on, so not asked again)
   assert.match(wanted.stdout, /sudo sh .*\.local\/lib\/eventloom\/seal\/setup\.sh/);
   assert.match(box.eventloom(["seal", "status"]).output, /^sealed mode is off/);
 

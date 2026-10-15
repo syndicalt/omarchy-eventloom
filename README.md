@@ -5,9 +5,9 @@ One local log of what the AI agents on your machine did.
 Eventloom is an Omarchy plugin that records, in a single append-only file per
 day, every session your coding agents start and finish, every tool they call,
 every approval they ask for, and how each ended. Beside that it keeps a
-memory: short summaries the agents write of their own replies, filed by
-project and handed to the next session that opens there, whichever agent it
-is. It captures omp and Claude
+memory, if you turn it on: short summaries the agents write of their own
+replies, filed by project and handed to the next session that opens there,
+whichever agent it is. It captures omp and Claude
 Code out of the box, and anything else can write to it with one command. The
 log never leaves the machine, is redacted before anything is written, and is
 hash-chained, so a line that was edited or removed afterwards shows up. An
@@ -46,10 +46,11 @@ questions come up that nothing answers well:
   from a script, a hook or another agent, and a `correlation_id` that ties the
   sessions of different agents to the same task.
 
-It is deliberately a record of *what happened*, not *what was said*. The
-bundled adapters log tool names and argument names, never arguments, output
-or prompts, so the log is safe to keep and cheap to read. See
-[Privacy](#privacy).
+It is mostly a record of *what happened*, not *what was said*. Of an agent's
+work the bundled adapters log tool names and argument names, never
+arguments, output or prompts. The one piece of content, if you turn memory
+on, is the summary an agent chooses to write of a reply (see
+[Memory](#memory)), which is what makes the rest readable. See [Privacy](#privacy).
 
 ## How it works
 
@@ -63,8 +64,9 @@ or prompts, so the log is safe to keep and cheap to read. See
 ```
 
 - **Adapters** sit outside the agents and use their official extension
-  points: an omp extension and Claude Code hooks. They never write to the
-  agent's terminal and never block it on a failure.
+  points: an omp extension and Claude Code hooks. With memory on they
+  put one thing in front of the agent, the briefing when a session opens;
+  otherwise they stay silent, and a failure never stops the agent.
 - **The CLI** is the only writer. It adds where a session ran (host, Omarchy
   release, git branch and commit), redacts, and hands the event to
   [@eventloom/runtime](https://github.com/syndicalt/eventloom), which seals it
@@ -101,7 +103,8 @@ them with `eventloom config set tapestry_port <n>` and `eventloom seal
 enable`.
 
 It finishes by running `eventloom doctor`, and it runs again by itself after
-`omarchy plugin update`. If it cannot finish you get one notification saying
+`omarchy plugin update`, once the shell has restarted (or at once with
+`omarchy-shell eventloom install`). If it cannot finish you get one notification saying
 so; the reason is in `omarchy-shell eventloom status`, and running
 `install.sh` in a terminal shows it in full. Notifications never quote what
 went wrong, because the text of a notification can be read by other users of
@@ -140,8 +143,16 @@ eventloom seal status                   # sealed mode: on or off, and how far th
 ## Memory
 
 A list of tool calls says that something happened, not what it was for. So
-agents are asked to say: after a reply that changed, decided or found
+agents can be asked to say: after a reply that changed, decided or found
 something, the agent records one to three sentences about it.
+
+Memory is off until you turn it on, because it changes what your agents are
+told: every new session is given instructions and the words of earlier
+sessions. `install.sh` asks when it runs in a terminal; otherwise:
+
+```sh
+eventloom config set memory on    # or off; eventloom doctor shows which
+```
 
 ```sh
 eventloom note --tags release <<'EOF'
@@ -167,8 +178,10 @@ eventloom recall --tag release   # narrowed by tag; also --correlation <id>, --a
 - **Bounded.** A summary is at most 600 characters; longer text is refused so
   the agent shortens it. It is read from standard input, never from the
   command line, and is redacted like everything else.
-- **Optional.** `EVENTLOOM_MEMORY=0` stops the briefing and the request for
-  summaries. `EVENTLOOM_MODE=metadata` keeps no content, so it does too.
+- **Your choice.** With memory off, sessions are neither briefed nor asked
+  for summaries; `eventloom note` and `recall` still work when you use them
+  yourself. `EVENTLOOM_MEMORY=1` or `0` overrides the setting for one
+  process, and `EVENTLOOM_MODE=metadata` keeps no content, so no memory.
 
 ## Events
 
@@ -200,8 +213,11 @@ correlates only with itself.
 - **omp** — `extensions/eventloom.ts`, copied to `~/.omp/agent/extensions/`.
   Queues events in memory and writes them in order through one
   `eventloom ingest` process at a time. At shutdown whatever is still queued
-  goes to a second process at once, so omp is never kept waiting; those last
-  events can be sealed out of order, and `occurred_at` gives the true one.
+  goes to a second process at once, so recording never keeps omp waiting;
+  those last events can be sealed out of order, and `occurred_at` gives the
+  true one. The one wait is the briefing before a session's first turn,
+  which is given two seconds and then abandoned (with memory off it returns
+  at once, empty).
 - **claude** — `hooks/eventloom-hook.sh`, registered in
   `~/.claude/settings.json` for `SessionStart`, `SessionEnd`, `PostToolUse` and
   `PostToolUseFailure`. `settings.json` is never rewritten if it cannot be
@@ -213,7 +229,9 @@ extension API, not a proxy), pipe them to `eventloom ingest` as one
 `{"type","actor","thread","payload"}` object per line, and add an entry to
 `lib/adapters.json` so `eventloom doctor` checks it.
 
-Adapters never write to the agent's terminal. A failed write goes to
+Apart from the briefing when memory is on, adapters print nothing into a
+session. A failed
+write goes to
 `~/.local/state/omarchy/agents/eventloom-errors.log`, and `eventloom doctor`
 reports it.
 
@@ -221,12 +239,12 @@ reports it.
 
 - Of what an agent does, the bundled adapters record tool names and argument
   names, never arguments, output or prompts. Of what it says, they record
-  only the summary the agent itself chooses to write (see Memory): a few
-  sentences, not the reply. Other content enters the log only through
+  only the summary the agent itself chooses to write when memory is on (see
+  Memory): a few sentences, not the reply. Other content enters the log only through
   `eventloom append`, a third-party `ingest`, or an error message.
 - A summary is content. It is redacted like any other text, which is best
   effort (below), it is shown in the Tapestry, and it is given to later
-  sessions in the same project. Set `EVENTLOOM_MEMORY=0` to do without.
+  sessions in the same project. Memory is off unless you turn it on.
 - Everything is redacted before sealing, because a sealed event cannot be
   edited. In a structured payload this is exact: every string or number under
   a secret-named key (`password`, `*_token`, `*_API_KEY`,
@@ -433,3 +451,8 @@ Prototype. Known limits:
   token cost, with `eventloom note` kept for what an agent or a person wants
   to record deliberately. Open: which model is good enough at that size, and
   how to ship a runtime for it.
+- **Reinstall after `omarchy plugin update` without a shell restart.** The
+  service installs when it loads, and an update does not reload it, so the
+  CLI and adapters stay on the old version until the shell restarts or
+  `omarchy-shell eventloom install` is run. The service should notice a
+  changed checkout by itself.

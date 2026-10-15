@@ -90,6 +90,15 @@ if [ -t 0 ] && [ -t 1 ]; then
       && say "the Tapestry will be served on port $answer" \
       || say "kept port $port (change it with: eventloom config set tapestry_port <n>)"
   fi
+  if [ "$("$BIN_DIR/eventloom" config get memory)" = off ]; then
+    printf '  Turn on shared memory? New Claude Code and omp sessions will be given the\n'
+    printf '  project'"'"'s recorded summaries and asked to add their own. [y/N]: '
+    read -r answer || answer=""
+    case "$answer" in
+      y | Y | yes) "$BIN_DIR/eventloom" config set memory on >/dev/null && say "memory is on" ;;
+      *) say "memory left off (turn it on later with: eventloom config set memory on)" ;;
+    esac
+  fi
   # Sealed mode needs root, once. This only says how: it is never run from here.
   case "$("$BIN_DIR/eventloom" seal status)" in
     "sealed mode is off"*)
