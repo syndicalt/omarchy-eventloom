@@ -289,6 +289,13 @@ test("in a terminal the installer asks for the Tapestry port; without one it ask
   assert.match(kept.stdout, /Tapestry port \[5151\]: /);
   assert.equal(port(), "5151", "enter keeps what was there");
 
+  // sealed mode is offered, explained when accepted, and never set up from here
+  assert.match(kept.stdout, /Enable sealed mode\? .* \[y\/N\]: /);
+  assert.match(kept.stdout, /sealed mode left off \(turn it on later with: eventloom seal enable\)/);
+  const wanted = inTerminal("\ny"); // port as it is, then sealed mode yes (memory is on, so not asked again)
+  assert.match(wanted.stdout, /sudo sh .*\.local\/lib\/eventloom\/seal\/setup\.sh/);
+  assert.match(box.eventloom(["seal", "status"]).output, /^sealed mode is off/);
+
   const refused = inTerminal("80");
   assert.equal(refused.status, 0, "a bad answer does not fail the install");
   assert.match(refused.stdout, /kept port 5151/);

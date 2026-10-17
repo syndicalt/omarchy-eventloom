@@ -2,15 +2,17 @@
 
 One local log of what the AI agents on your machine did.
 
-Eventloom is an Omarchy plugin that records, in a single append-only file per
-day, every session your coding agents start and finish, every tool they call,
-every approval they ask for, and how each ended. Beside that it keeps a
+Eventloom is an Omarchy plugin that records agent activity in a single
+append-only file per day: session lifecycles, tool calls and the approval
+events and outcomes each adapter can observe. Beside that it keeps a
 memory, if you turn it on: short summaries the agents write of their own
 replies, filed by project and handed to the next session that opens there,
-whichever agent it is. It includes native adapters for twelve agents, with coverage described below.
-`eventloom run <agent>` adds process capture for all sixteen Omarchy targets. The
-log never leaves the machine, is redacted before anything is written, and is
-hash-chained, so a line that was edited or removed afterwards shows up.
+when that agent supports automatic memory. Twelve agents have native adapters,
+with the event coverage listed below. `eventloom run <agent>` adds process
+start and exit capture for every agent in Omarchy's chooser. The log never
+leaves the machine, is redacted before anything is written, and is
+hash-chained, so a line that was edited or removed afterwards shows up. An
+optional sealed mode keeps a record of the log that agents cannot rewrite.
 
 ```
 $ eventloom tail --limit 4
@@ -58,14 +60,16 @@ on, is the summary an agent chooses to write of a reply (see
 ```
  omp ──extension──┐
                   ├─► eventloom CLI ─► redact ─► seal ─► ~/.local/state/omarchy/agents/logs/
- Claude ──hooks───┘                                         2026-10-12.jsonl   (one per day,
+ Claude ──hooks───┤
+ Codex ───hooks───┘                                         2026-10-12.jsonl   (one per day,
  anything ─ eventloom append / ingest                                           hash-chained)
                                                                  │
                                     eventloom tail · verify · doctor · tapestry
 ```
 
 - **Adapters** sit outside the agents and use their official extension
-  points: an omp extension and Claude Code hooks. With memory on they
+  points: an omp extension and hooks for Claude Code and Codex. With memory
+  on they
   put one thing in front of the agent, the briefing when a session opens;
   otherwise they stay silent, and a failure never stops the agent.
 - **The CLI** is the only writer. It adds where a session ran (host, Omarchy
@@ -95,7 +99,6 @@ Adding only clones the repository. Enabling starts a small background service
   is edited in place: other hooks are kept, the previous contents are saved
   beside it as `settings.json.eventloom-backup`, and a file that cannot be
   parsed is left alone.
-
 - the Codex hooks, if its configuration directory is present. Registration
   updates `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`), preserves other
   hooks, and backs up changed contents. `config.toml` and hook-trust records
@@ -134,9 +137,13 @@ whether a registered adapter runs. The background check uses the shell
 service's environment; use the command from your terminal for overrides such
 as `CODEX_HOME`, `OPENCODE_CONFIG_DIR` or `PI_CODING_AGENT_DIR`.
 
-Run in a terminal, `install.sh` asks for the Tapestry port and offers shared
-memory if it is off. Without a terminal it preserves the existing settings;
-the defaults are port 4747 and memory off.
+Run in a terminal, `install.sh` asks for the Tapestry's port, offers shared
+memory if it is off, then offers [sealed mode](#sealed-mode) if it is off.
+For sealed mode it prints a `sudo` command and runs nothing. Installed
+through the plugin there is no terminal, so it asks nothing: the default
+port is 4747, memory is off, and sealed mode is off. Change them with
+`eventloom config set tapestry_port <n>`, `eventloom config set memory on`,
+and `eventloom seal enable`.
 
 It finishes by running `eventloom doctor`, and it runs again by itself after
 `omarchy plugin update`, normally within one minute. The service checks the
@@ -175,6 +182,7 @@ eventloom recover                       # set a damaged shard aside, keep its ve
 eventloom purge 2026-10-10              # delete one day's shard and record that it was
 eventloom path                          # today's shard
 eventloom config set tapestry_port 5000 # remember a setting (eventloom config lists them)
+eventloom seal status                   # sealed mode: on or off, and how far the log is sealed
 ```
 
 `omarchy-eventloom` and `omarchy-eventloom-inspect` are aliases for
@@ -436,12 +444,58 @@ by `eventloom recover` and `eventloom purge` are recorded in the log and
 reported as warnings; anything that changes after such a record is an error
 again.
 
-It does not detect removal of events from the end of the newest shard (or of
-events appended to an older shard after it was anchored), and the chain is
-not signed: a process running as you can rewrite the log and
-recompute every hash, or append events under another agent's name. Treat the
-log as a tamper-evident record against accident and casual edits, and treat
-what agents read from it as untrusted input.
+On its own that is tamper-evident against accident and casual edits, and no
+more. The head of the chain is the last line of today's shard, and nothing
+outside the log holds it: a process running as you, an agent included, can
+cut events off the end, or rewrite the log and recompute every hash, and
+`verify` will pass.
+
+### Sealed mode
+
+Sealed mode closes that gap on the machine itself. It is off unless you turn
+it on, because turning it on takes root, once.
+
+```sh
+eventloom seal enable    # prints the one sudo command; eventloom never runs it
+eventloom seal status    # on or off, how many events are not yet sealed
+eventloom seal now       # seal the log's head immediately
+```
+
+- The setup creates a system user, `eventloom-seal`, and a seal file that
+  only that user can write: `/var/lib/eventloom-seal/<uid>.evtseal`. You can
+  read it; neither you nor an agent running as you can change or delete it.
+- Eventloom appends to it by asking a small root-owned helper, through one
+  sudoers rule that allows that helper and nothing else. Each record is the
+  day, the count of events and the hash of the last one, stamped with the
+  helper's own clock. No log content.
+- The log is sealed when a session starts or ends and every 10 events, so at
+  most 9 events are unsealed at a time.
+- `eventloom verify` then also fails if the log does not hold, at each sealed
+  position, the sealed hash. That catches events cut off the end, a rewritten
+  log however consistent its hashes, and a deleted day.
+- `purge` and `recover` still work, and write a record in the seal file that
+  cannot be removed. The gap is reported by `verify` from then on.
+- There is no setting for it. The log is sealed if its seal file exists, so
+  an agent cannot switch it off; it can only stop sealing, which shows as a
+  growing count of unsealed events.
+
+What sealed mode does not do:
+
+- It does not make events true. An agent can still append false events, or
+  events under another agent's name; a seal says what the log held at a time.
+- It does not cover the events written since the last seal.
+- It does not hold against root, which can rewrite the seal file too. Only a
+  witness off the machine answers that.
+- It does not protect the program that checks it. `eventloom` is installed in
+  your home directory, where an agent can change it, so an agent that wants
+  to hide tampering can also make `verify` lie. The seal file itself stays
+  honest: it is plain text, and the hash on any `head` line can be compared
+  by hand with the `hash` of that event in the day's shard.
+
+Either way, treat what agents read from the log as untrusted input.
+
+The design, and why each part is there, is in
+[`docs/sealed-mode.md`](docs/sealed-mode.md).
 
 ## Visualization
 
@@ -501,8 +555,9 @@ omarchy plugin remove syndicalt.eventloom
 ```
 
 Run `uninstall.sh` first: removing the plugin only deletes its folder. The
-script removes the installed files and unregisters the Claude hooks, leaving
-every other hook untouched.
+script removes the installed files, the OpenCode plugin, and the Claude and
+Codex hooks, leaving other hooks and plugins untouched. A script still referenced by user-owned
+hooks, or whose unregistration failed, is retained.
 
 ## Development
 
@@ -547,10 +602,18 @@ Prototype. Known limits:
   now pass on omp 18.8.6 and Claude Code 2.1.302 (`check:omp`, `check:claude`).
   The Claude hook is also tested through the installed
   script with inputs written from Claude Code's hook reference.
-- No adapters yet for Codex, Grok or opencode.
+- Except for the Codex, Claude and omp native smoke checks, adapters are
+  validated against documented event contracts and installed-loader tests,
+  rather than live model sessions in each agent. Agent versions can expose
+  fewer hooks than their latest reference. Muse clears environment overrides
+  such as `EVENTLOOM_DISABLE`; use its hook controls to disable capture there.
 
 ## Roadmap
 
+- **Richer native coverage.** Add Hermes, OpenClaw, Kimi and Ori's own harness
+  integrations beyond process capture, and validate the existing adapters
+  against real installed agents. Track actual coverage and limitations in
+  the matrix rather than treating hook registration as runtime validation.
 - **Summaries written by a local model.** Today an agent writes its own
   summaries, which costs it tokens and depends on it doing so. A small model
   run on the CPU (around a billion parameters, a few hundred megabytes,

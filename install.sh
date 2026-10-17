@@ -40,7 +40,7 @@ fi
 [ -d "$STAGE/node_modules/@eventloom/runtime" ] || die "@eventloom/runtime is missing after install"
 
 # --- 3. files: $LIB_DIR mirrors the repository layout ------------------------
-mkdir -p "$LIB_DIR/lib" "$LIB_DIR/tapestry" "$BIN_DIR" "$LOG_DIR"
+mkdir -p "$LIB_DIR/lib" "$LIB_DIR/tapestry" "$LIB_DIR/seal" "$BIN_DIR" "$LOG_DIR"
 chmod 700 "$LOG_DIR"
 find "$LOG_DIR" -name '*.jsonl' -exec chmod 600 {} +
 rm -rf "$LIB_DIR/node_modules"
@@ -48,6 +48,7 @@ mv "$STAGE/node_modules" "$STAGE/package.json" "$STAGE/package-lock.json" "$LIB_
 rm -rf "$STAGE"
 cp "$REPO_DIR"/lib/*.mjs "$REPO_DIR/lib/adapters.json" "$LIB_DIR/lib/"
 cp -R "$REPO_DIR/tapestry/." "$LIB_DIR/tapestry/"
+cp "$REPO_DIR/seal/eventloom-seal" "$REPO_DIR/seal/setup.sh" "$LIB_DIR/seal/"
 for name in eventloom omarchy-eventloom omarchy-eventloom-inspect; do
   cp "$REPO_DIR/bin/$name" "$BIN_DIR/$name"
   chmod +x "$BIN_DIR/$name"
@@ -87,6 +88,17 @@ if [ -t 0 ] && [ -t 1 ]; then
       *) say "memory left off (turn it on later with: eventloom config set memory on)" ;;
     esac
   fi
+  # Sealed mode needs root, once. This only says how: it is never run from here.
+  case "$("$BIN_DIR/eventloom" seal status)" in
+    "sealed mode is off"*)
+      printf '  Enable sealed mode? It keeps a record of the log that agents cannot rewrite, and needs sudo once. [y/N]: '
+      read -r answer || answer=""
+      case "$answer" in
+        y | Y | yes) "$BIN_DIR/eventloom" seal enable | sed 's/^/  /' ;;
+        *) say "sealed mode left off (turn it on later with: eventloom seal enable)" ;;
+      esac
+      ;;
+  esac
 fi
 
 # --- 8. the install is done when doctor says the log works --------------------

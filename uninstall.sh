@@ -62,6 +62,11 @@ if [ -f "$pi_extension" ] && grep -Fq 'omarchy-eventloom Pi adapter' "$pi_extens
   say "pi adapter removed"
 fi
 
+# Sealed mode was set up as root and is not undone from here.
+if [ -x "$BIN_DIR/eventloom" ] && "$BIN_DIR/eventloom" seal status 2>/dev/null | grep -q '^sealed mode is on'; then
+  say "sealed mode is still set up. To remove it: sudo sh $(cd "$(dirname "$0")" && pwd)/seal/setup.sh --remove"
+fi
+
 native_unwired=true
 for agent in copilot gemini crush grok agy muse cursor-agent; do
   if [ ! -x "$BIN_DIR/eventloom" ] || ! "$BIN_DIR/eventloom" unwire-native-hooks --agent "$agent" >/dev/null; then
