@@ -6,11 +6,19 @@ import { layoutWeave } from "/layout.mjs";
 import { FINE, LOOSE, TONE, hashSeed, motifFor, rng } from "/motif.mjs";
 import { LINEN_THREADS, linenMaps, plasterMap, softRectMap, stitchShadowMap, textMap, threadMaps, woodMap } from "/fabric.js";
 import { buildYarn, yarnPath, yarnShadowMaterial } from "/yarn.js";
+import { connectedActions, progressAt, sewingAt } from "/playback.mjs";
 
 const canvas = document.querySelector("#cloth");
 const panel = document.querySelector("#panel");
 const empty = document.querySelector("#empty");
 const tip = document.querySelector("#tip");
+const inspector = document.querySelector("#inspect-body");
+const detailCanvas = document.querySelector("#detail-canvas");
+const scrubber = document.querySelector("#scrubber");
+const playButton = document.querySelector("#play");
+const followButton = document.querySelector("#follow");
+const liveButton = document.querySelector("#live");
+const traceButton = document.querySelector("#trace");
 const params = new URLSearchParams(location.search);
 const STILL = params.has("still") || matchMedia("(prefers-reduced-motion: reduce)").matches;
 const FREEZE = params.has("at") ? Math.max(0, Math.min(1, Number(params.get("at")))) : null;
@@ -44,7 +52,8 @@ const maps = { linen: linenMaps(), thread: threadMaps(), wood: woodMap(), plaste
 const state = {
   spec: null, weave: null, signature: "", world: null, size: { w: 0, h: 0 },
   cam: { x: 0, y: 0, d: 400 }, fit: 400, tilt: { x: 0, y: 0, tx: 0, ty: 0 },
-  drag: null, selected: null, hover: null, yarns: [], timed: [], touched: false, sewnUntil: 0, sewing: null, last: null, pin: null, follow: null, dirty: true,
+  playback: "live", speed: 1, fraction: 1, trace: false, actor: null, focusMeshes: [], detailAction: null, followLive: false, replay: false,
+  drag: null, selected: null, hover: null, yarns: [], timed: [], touched: false, sewnUntil: 0, sewing: null, last: null, follow: null, dirty: true,
 };
 
 // ---------------------------------------------------------------- materials
@@ -64,6 +73,46 @@ function sewn(material, mode) {
   return material;
 }
 
+// The same displacement is applied to linen, embroidery and yarn, so the
+// stitches remain seated on the cloth even at a fold or curled selvedge.
+const clothSize = { value: new THREE.Vector2(180, 360) };
+const DRAPE = `
+  uniform vec2 uClothSize;
+  float clothHeight(vec2 p) {
+    float x = p.x / uClothSize.x;
+    float y = clamp(p.y / uClothSize.y, 0.0, 1.0);
+    float pleat = sin(x * 31.4159 + sin(y * 5.0) * 0.35);
+    float edges = exp(-max(0.0, min(p.x, uClothSize.x - p.x)) / 2.8);
+    return pleat * (0.35 + 1.35 * pow(y, 6.0)) + edges * (0.65 + 0.50 * sin(y * 15.0));
+  }
+`;
+function draped(material) {
+  const previous = material.onBeforeCompile.bind(material);
+  const key = material.customProgramCacheKey();
+  material.onBeforeCompile = (shader, renderer) => {
+    previous(shader, renderer);
+    shader.uniforms.uClothSize = clothSize;
+    shader.vertexShader = DRAPE + shader.vertexShader.replace("projectionMatrix * modelViewMatrix * vec4(position, 1.0)", "projectionMatrix * modelViewMatrix * vec4(position.xy, position.z + clothHeight(position.xy), 1.0)").replace("#include <project_vertex>", `
+      vec4 mvPosition = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+        mvPosition = instanceMatrix * mvPosition;
+      #endif
+      mvPosition = modelMatrix * mvPosition;
+      mvPosition.z += clothHeight(mvPosition.xy);
+      mvPosition = viewMatrix * mvPosition;
+      gl_Position = projectionMatrix * mvPosition;
+    `);
+  };
+  material.customProgramCacheKey = () => key + "-draped";
+  return material;
+}
+function clothHeight(x, y) {
+  const W = clothSize.value.x, H = clothSize.value.y;
+  const v = Math.max(0, Math.min(1, y / H));
+  return Math.sin(x / W * Math.PI * 10 + Math.sin(v * 5) * 0.35) * (0.35 + 1.35 * v ** 6)
+    + Math.exp(-Math.max(0, Math.min(x, W - x)) / 2.8) * (0.65 + 0.50 * Math.sin(v * 15));
+}
+
 const threadMaterial = sewn(new THREE.MeshPhysicalMaterial({
   map: maps.thread.map, bumpMap: maps.thread.bumpMap, bumpScale: 0.9,
   roughness: 0.72, sheen: 1, sheenRoughness: 0.45, sheenColor: new THREE.Color("#5a5148"),
@@ -80,6 +129,7 @@ const yarnMaterial = new THREE.MeshPhysicalMaterial({
   roughness: 0.82, sheen: 1, sheenRoughness: 0.55, sheenColor: new THREE.Color("#6b6156"),
 });
 const yarnShadow = yarnShadowMaterial();
+for (const material of [threadMaterial, knotMaterial, blobMaterial, yarnMaterial, yarnShadow]) draped(material);
 const woodMaterial = new THREE.MeshStandardMaterial({ map: maps.wood, roughness: 0.5, color: "#c8a37a" });
 
 function stitchGeometry() {
@@ -122,7 +172,7 @@ function stitchGeometry() {
 const STITCH = stitchGeometry();
 const BLOB = new THREE.PlaneGeometry(1.36, 1).translate(0.5, 0, 0);
 const KNOT = new THREE.TorusKnotGeometry(0.62, 0.3, 40, 6, 2, 3);
-const UNIT = new THREE.PlaneGeometry(1, 1);
+const UNIT = new THREE.PlaneGeometry(1, 1, 16, 4);
 
 function toneSet(dye) {
   const base = new THREE.Color(dye);
@@ -146,7 +196,8 @@ function dispose(group) {
   group.traverse((node) => {
     if (node.geometry && ![STITCH, BLOB, KNOT, UNIT].includes(node.geometry)) node.geometry.dispose();
     if (node.userData.ownMaterial) {
-      node.material.map?.dispose();
+      if (node.userData.ownMap) node.material.map?.dispose();
+      if (node.userData.ownNormalMap) node.material.normalMap?.dispose();
       node.material.dispose();
     }
   });
@@ -158,11 +209,12 @@ function threadBag() {
   const stitches = [];
   const knots = [];
   return {
+    owner: null,
     stitch(x0, y0, x1, y1, color, birth, { radius = 0.2, loose = false, z = 0, shadow = true, jitter = 0.5 } = {}) {
-      stitches.push({ x0, y0, x1, y1, color, birth, radius, loose, z, shadow, jitter });
+      stitches.push({ owner: this.owner, x0, y0, x1, y1, color, birth, radius, loose, z, shadow, jitter });
     },
     knot(x, y, color, birth, size) {
-      knots.push({ x, y, color, birth, size });
+      knots.push({ owner: this.owner, x, y, color, birth, size });
     },
     get count() {
       return stitches.length;
@@ -215,6 +267,7 @@ function threadBag() {
       shadows.geometry.setAttribute("aBirth", new THREE.InstancedBufferAttribute(shadowBirth, 1));
       threads.frustumCulled = shadows.frustumCulled = false;
       group.add(shadows, threads);
+      state.focusMeshes.push({ mesh: threads, colors: colors.slice(), owners: stitches.map((s) => s.owner) });
 
       const k = knots.length;
       if (k) {
@@ -244,6 +297,7 @@ function threadBag() {
         kShadow.geometry.setAttribute("aBirth", new THREE.InstancedBufferAttribute(kBirth, 1));
         mesh.frustumCulled = kShadow.frustumCulled = false;
         group.add(kShadow, mesh);
+        state.focusMeshes.push({ mesh, colors: kColors.slice(), owners: knots.map((k) => k.owner) });
       }
     },
   };
@@ -253,10 +307,12 @@ function plane(map, width, height, x, y, z, options = {}) {
   const material = options.basic
     ? new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, color: options.color ?? "#ffffff", opacity: options.opacity ?? 1 })
     : new THREE.MeshStandardMaterial({ map, transparent: !!options.transparent, depthWrite: !options.transparent, roughness: 0.95, color: options.color ?? "#ffffff" });
+  draped(material);
   const mesh = new THREE.Mesh(UNIT, material);
   mesh.scale.set(width, height, 1);
   mesh.position.set(x, y, z);
-  mesh.userData.ownMaterial = !!options.ownMap;
+  mesh.userData.ownMaterial = true;
+  mesh.userData.ownMap = !!options.ownMap;
   return mesh;
 }
 
@@ -319,6 +375,7 @@ function hangCloth(group, bag, W, H) {
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i);
     const y = p.getY(i);
+    p.setZ(i, clothHeight(x, y));
     // Uneven dye lots, a faint memory of folds, and wear toward the edges.
     const mottle = noise(x / 34, y / 34) * 0.6 + noise(x / 9, y / 9) * 0.4;
     const fold = Math.sin((x / W) * Math.PI * 5 + noise(0.5, y / 80) * 2) * 0.018;
@@ -327,18 +384,22 @@ function hangCloth(group, bag, W, H) {
     const c = (0.9 + mottle * 0.13 + fold) * wear;
     colors.push(c, c * (0.992 + noise(x / 60 + 9, y / 60) * 0.012), c * (0.97 + noise(x / 50, y / 50 + 7) * 0.04));
   }
+  geometry.computeVertexNormals();
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   const cloth = new THREE.Mesh(geometry, linen);
   cloth.userData.ownMaterial = true;
+  cloth.userData.ownMap = cloth.userData.ownNormalMap = true;
   group.add(cloth);
 
   // Turned hems at head and foot: a doubled strip, held by running stitch.
-  const hemMaterial = new THREE.MeshStandardMaterial({ map: maps.linen.map.clone(), normalMap: maps.linen.normalMap.clone(), roughness: 0.96, color: "#efe9dc" });
+  const hemMaterial = draped(new THREE.MeshStandardMaterial({ map: maps.linen.map.clone(), normalMap: maps.linen.normalMap.clone(), roughness: 0.96, color: "#e4d3af" }));
   hemMaterial.map.repeat.set(W / tile, 5 / tile);
   hemMaterial.normalMap.repeat.set(W / tile, 5 / tile);
   const thread = new THREE.Color(LINEN_THREAD);
   for (const y of [2.5, H - 2.5]) {
     const hem = new THREE.Mesh(new THREE.PlaneGeometry(W, 5).translate(W / 2, y, 0.05), hemMaterial);
+    hem.userData.ownMaterial = true;
+    hem.userData.ownMap = hem.userData.ownNormalMap = true;
     group.add(hem);
     group.add(plane(maps.rect, W + 2, 2.2, W / 2 + 0.4, y + (y < H / 2 ? 2.5 : -2.9), 0.008, { basic: true, color: "#2a1608", opacity: 0.2 }));
     const seam = y < H / 2 ? y + 1.7 : y - 1.7;
@@ -382,6 +443,7 @@ function hangCloth(group, bag, W, H) {
     const x = 7 + ((W - 14) * i) / (tabs - 1);
     const tab = ribbon(path, 7.5, tabMaterial);
     tab.position.x = x;
+    tab.userData.ownMaterial = true;
     group.add(tab);
     for (const dx of [-2.6, -0.9, 0.9, 2.6]) {
       bag.stitch(x + dx - 0.5, H - 3.4, x + dx + 0.5, H - 2.4, thread, -1e3, { radius: 0.17, z: 0.08, shadow: false });
@@ -395,6 +457,7 @@ function hangCloth(group, bag, W, H) {
   const wall = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), new THREE.MeshStandardMaterial({ map: wallMap, color: "#4a3b30", roughness: 1 }));
   wall.position.set(W / 2, H / 2, -9);
   wall.userData.ownMaterial = true;
+  wall.userData.ownMap = true;
   group.add(wall);
   const spread = 9 + Math.min(W, H) * 0.05;
   group.add(plane(maps.halo, W + spread * 5, H + spread * 5, W / 2 + spread * 0.7, H / 2 - spread * 0.9, -8.9, { basic: true, color: "#000000", opacity: 0.62 }));
@@ -450,6 +513,7 @@ function anchor(action, toward) {
 }
 
 function build(spec, known) {
+  const instant = STILL && !state.replay;
   if (state.world) dispose(state.world);
   const weave = layoutWeave(spec);
   const group = new THREE.Group();
@@ -461,10 +525,16 @@ function build(spec, known) {
   const oy = MARGIN.bottom;
   const bag = threadBag();
   state.timed = [];
+  state.focusMeshes = [];
+  clothSize.value.set(W, H);
   hangCloth(group, bag, W, H);
 
   const actors = [...new Set(weave.actions.map((action) => action.actor))].sort();
-  const dyes = new Map(actors.map((actor, i) => [actor, toneSet(DYES[i % DYES.length])]));
+  const dyes = new Map(actors.map((actor) => {
+    const fixed = { claude: 0, codex: 1, omp: 2 };
+    const index = Object.hasOwn(fixed, actor) ? fixed[actor] : 3 + hashSeed(actor) % (DYES.length - 3);
+    return [actor, toneSet(DYES[index])];
+  }));
   const inkTones = toneSet(FIXED.ink);
 
   // Sewing order is log order. Anything already on the cloth stays put; only
@@ -473,10 +543,10 @@ function build(spec, known) {
   const motifs = new Map(weave.actions.map((action) => [action, motifFor(action, action.border ? action.width - 1 : 9)]));
   const work = fresh.reduce((sum, action) => sum + motifs.get(action).stitches.length + 8, 0);
   const begin = known ? clock.value + 0.2 : 0.7;
-  const duration = STILL ? 0 : known ? Math.min(4, 0.4 + fresh.length * 0.25) : Math.max(4, Math.min(11, 2.5 + fresh.length * 0.045));
+  const duration = instant ? 0 : known ? Math.min(4, 0.4 + fresh.length * 0.25) : Math.max(4, Math.min(11, 2.5 + fresh.length * 0.045));
   let done = 0;
   for (const action of weave.actions) {
-    if (known?.has(action.id) || STILL) {
+    if (known?.has(action.id) || instant) {
       action.birth = -1e3;
       action.sewn = -1e3;
       continue;
@@ -493,6 +563,7 @@ function build(spec, known) {
   };
 
   for (const band of weave.bands) {
+    bag.owner = band.key;
     const tones = dyes.get(band.actor);
     const first = Math.min(...band.actions.map((action) => action.birth));
     stitchBand(bag, band, ox, oy, tones, railClock(band));
@@ -517,6 +588,7 @@ function build(spec, known) {
   }
 
   for (const action of weave.actions) {
+    bag.owner = action.id;
     const tones = dyes.get(action.actor);
     const motif = motifs.get(action);
     const cx = ox + action.x;
@@ -531,11 +603,18 @@ function build(spec, known) {
       });
     });
     for (const k of motif.knots) bag.knot(cx + k[0], cy + k[1], tones[k[2]], action.sewn, k[3]);
+    action.path = motif.stitches.map((stitch, i) => ({
+      from: new THREE.Vector3(cx + stitch[0], cy + stitch[1], 0.15),
+      to: new THREE.Vector3(cx + stitch[2], cy + stitch[3], 0.15),
+      birth: action.birth + per * i,
+      end: action.birth + per * (i + 1),
+    }));
     action.wx = cx;
     action.wy = cy;
     action.dye = tones[TONE.dye];
   }
 
+  bag.owner = null;
   // The time ruler, stamped and tacked down the left margin.
   const tickX = left - 7;
   for (const mark of weave.ruler) {
@@ -544,7 +623,7 @@ function build(spec, known) {
     const when = new Date(mark.t);
     const label = multiDay
       ? when.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })
-      : when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      : when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
     ink(group, label, tickX - 1.4, y, 2.5, 1, { weight: 500 });
   }
   for (const gap of weave.breaks) {
@@ -552,18 +631,6 @@ function build(spec, known) {
     for (let i = 0; i < 3; i++) {
       bag.stitch(tickX + 0.2 + i * 0.7, y + (i % 2 ? 0.45 : -0.45), tickX + 0.9 + i * 0.7, y + (i % 2 ? -0.45 : 0.45), inkTones[TONE.dye], -1e3, { radius: 0.13, jitter: 0.2 });
     }
-  }
-
-  // The dye key, worked along the foot.
-  let keyX = W - 8;
-  for (const actor of [...actors].reverse()) {
-    const { width } = ink(group, actor, keyX, 12.2, 3, 1, { weight: 600 });
-    keyX -= width + 1.2;
-    const tones = dyes.get(actor);
-    for (let i = 0; i < 9; i++) {
-      bag.stitch(keyX - 4.2 + i * 0.5, 10.8, keyX - 4.1 + i * 0.5, 13.6, tones[i % 4 === 1 ? TONE.light : TONE.dye], -1e3, { radius: 0.22 });
-    }
-    keyX -= 8.5;
   }
 
   bag.build(group);
@@ -582,16 +649,19 @@ function build(spec, known) {
     const colors = link.kind === "handoff" ? [violet, violet.clone().lerp(cream, 0.45), source[TONE.dye]]
       : link.kind === "resume" ? [source[TONE.dye], source[TONE.light], source[TONE.dark]]
       : link.kind === "correlation" ? [new THREE.Color(FIXED.gold), cream, target[TONE.dye]]
-      : link.kind === "memory" ? [new THREE.Color(FIXED.gold), source[TONE.light], new THREE.Color(FIXED.gold)]
+      : link.kind === "memory" ? [new THREE.Color("#d6af61"), new THREE.Color("#f0d597"), new THREE.Color("#a8762e")]
       : [source[TONE.dye], target[TONE.dye], cream];
     const seed = hashSeed(link.from.id + ">" + link.to.id);
-    const radius = link.kind === "handoff" ? 0.62 : link.kind === "memory" ? 0.34 : 0.5;
+    const radius = link.kind === "handoff" ? 0.48 : link.kind === "memory" ? 0.38 : 0.38;
     const yarn = buildYarn(yarnPath(a, b, seed), { radius, colors, seed, shadow: SHADOW });
-    const mesh = new THREE.Mesh(yarn.geometry, yarnMaterial);
+    const material = draped(yarnMaterial.clone());
+    material.roughness = link.kind === "memory" ? 0.46 : 0.78;
+    const mesh = new THREE.Mesh(yarn.geometry, material);
+    mesh.userData.ownMaterial = true;
     const shade = new THREE.Mesh(yarn.shadowGeometry, yarnShadow);
     mesh.frustumCulled = shade.frustumCulled = false;
     const knots = [a, b].map((end) => {
-      const knot = new THREE.Mesh(KNOT, new THREE.MeshPhysicalMaterial({ color: colors[0], map: maps.thread.map, bumpMap: maps.thread.bumpMap, bumpScale: 1.2, roughness: 0.8, sheen: 1, sheenColor: new THREE.Color("#5a5148") }));
+      const knot = new THREE.Mesh(KNOT, draped(new THREE.MeshPhysicalMaterial({ color: colors[0], map: maps.thread.map, bumpMap: maps.thread.bumpMap, bumpScale: 1.2, roughness: 0.6, sheen: 1, sheenColor: new THREE.Color("#ae9060") })));
       knot.position.set(end.x, end.y, 0.35);
       knot.scale.setScalar(radius * 1.9);
       knot.rotation.z = (seed % 628) / 100;
@@ -608,14 +678,18 @@ function build(spec, known) {
   state.world = group;
   state.weave = weave;
   state.size = { w: W, h: H, ox, oy };
-  state.sewnUntil = STILL ? 0 : begin + duration + 2.2;
-  state.sewing = STILL || !fresh.length ? null : { actions: fresh, i: 0, begin, end: begin + duration };
+  state.sewnUntil = begin + duration + 2.2;
+  state.sewing = instant || !fresh.length ? null : { actions: fresh, i: 0, begin, end: begin + duration };
   if (!known) {
-    clock.value = STILL ? 1e6 : 0;
+    clock.value = instant ? 1e6 : 0;
     if (FREEZE !== null) clock.value = begin + duration * FREEZE;
   }
   updateYarns();
   moveNeedle();
+  state.detailAction = weave.actions.filter((action) => action.type === "agent.reply.summarized").at(-1) ?? weave.actions.find((action) => !action.border);
+  updateLegend(actors, dyes);
+  applyFocus();
+  state.detailDirty = true;
   state.dirty = true;
 }
 
@@ -631,26 +705,9 @@ function updateYarns() {
   }
 }
 
-// The hoop marks whatever is under inspection.
-const hoop = new THREE.Group();
-{
-  const outer = new THREE.Mesh(new THREE.TorusGeometry(8.4, 0.5, 14, 96), woodMaterial);
-  const inner = new THREE.Mesh(new THREE.TorusGeometry(7.75, 0.36, 12, 96), new THREE.MeshStandardMaterial({ map: maps.wood, color: "#e2c49a", roughness: 0.55 }));
-  outer.position.z = 0.55;
-  inner.position.z = 0.4;
-  const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 2, 12), new THREE.MeshStandardMaterial({ color: "#b99a54", metalness: 0.8, roughness: 0.35 }));
-  screw.rotation.z = Math.PI / 2;
-  screw.position.set(0, 9.2, 0.6);
-  const shade = new THREE.Mesh(new THREE.RingGeometry(7.3, 9.6, 96), new THREE.MeshBasicMaterial({ color: "#1e1006", transparent: true, opacity: 0.3, depthWrite: false }));
-  shade.position.set(SHADOW.x * 0.9, SHADOW.y * 0.9, 0.018);
-  hoop.add(shade, inner, outer, screw);
-  hoop.visible = false;
-  scene.add(hoop);
-}
-
 // The needle rides the newest stitch while the cloth is being worked.
 const needle = new THREE.Group();
-const needleThread = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5), new THREE.MeshStandardMaterial({ roughness: 0.8 }));
+const needleThread = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshPhysicalMaterial({ roughness: 0.62, sheen: 1 }));
 {
   const steel = new THREE.MeshStandardMaterial({ color: "#e9e6de", metalness: 0.55, roughness: 0.28, emissive: "#3a3833" });
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.03, 9, 10).translate(0, 4.5, 0), steel);
@@ -665,23 +722,50 @@ const needleEye = new THREE.Vector3();
 
 function moveNeedle() {
   const sewing = state.sewing;
-  if (!sewing || clock.value > sewing.end + 0.25 || clock.value < sewing.begin) {
-    needle.visible = needleThread.visible = false;
+  const idle = !sewing || clock.value > sewing.end + 0.25 || clock.value < sewing.begin;
+  if (idle) {
+    const action = state.weave?.actions.filter((a) => !a.border && a.birth <= clock.value).at(-1);
+    if (!action) { needle.visible = needleThread.visible = false; return; }
+    needle.position.set(action.wx + 4, action.wy + 2, clothHeight(action.wx + 4, action.wy + 2) + 0.3);
+    needle.rotation.set(0.3, 0.3, -0.75);
+    needle.visible = needleThread.visible = true;
+    needleEye.set(0, 9.2, 0).applyEuler(needle.rotation).add(needle.position);
+    const start = new THREE.Vector3(action.wx, action.wy, clothHeight(action.wx, action.wy) + 0.2);
+    const loop = new THREE.CatmullRomCurve3([
+      start, start.clone().add(new THREE.Vector3(11, 1, 2)),
+      needleEye.clone().add(new THREE.Vector3(6, 3, 2)), needleEye,
+    ]);
+    needleThread.geometry.dispose();
+    needleThread.geometry = new THREE.TubeGeometry(loop, 40, 0.10, 6, false);
+    needleThread.material.color.copy(action.dye);
     return;
   }
+  needle.rotation.set(0.95, 0, -0.5);
   while (sewing.i + 1 < sewing.actions.length && sewing.actions[sewing.i + 1].birth <= clock.value) sewing.i++;
+  // Seeking may also move backwards through the sewing sequence.
+  while (sewing.i > 0 && sewing.actions[sewing.i].birth > clock.value) sewing.i--;
   const action = sewing.actions[sewing.i];
-  const reach = Math.min(4, action.width / 2 - 1);
-  const dip = Math.abs(Math.sin(clock.value * 21));
-  needleAt.set(action.wx + Math.sin(clock.value * 13) * reach, action.wy + Math.cos(clock.value * 17) * 3, 0.2 + dip * 2.4);
-  if (!needle.visible) needle.position.copy(needleAt);
-  needle.position.lerp(needleAt, 0.3);
+  const path = action.path;
+  if (!path?.length) { needle.visible = needleThread.visible = false; return; }
+  const part = Math.max(0, Math.min(path.length - 1, Math.floor(progressAt(clock.value, action.birth, action.sewn) * path.length)));
+  const stitch = path[part];
+  const k = progressAt(clock.value, stitch.birth, stitch.end);
+  needleAt.copy(stitch.from).lerp(stitch.to, Math.min(1, k * 1.7));
+  needleAt.z += clothHeight(needleAt.x, needleAt.y) + Math.sin(k * Math.PI) * 3.1;
+  needle.position.copy(needleAt);
+  needle.rotation.z = -0.5 + Math.sin(k * Math.PI) * 0.25;
   needle.visible = needleThread.visible = true;
-  // The working thread runs from the eye back to where it last went in.
   needleEye.set(0, 9.2, 0).applyEuler(needle.rotation).add(needle.position);
-  needleThread.position.set(action.wx, action.wy, 0.15);
-  needleThread.lookAt(needleEye);
-  needleThread.scale.set(1, 1, needleEye.distanceTo(needleThread.position));
+  const start = stitch.from.clone();
+  start.z += clothHeight(start.x, start.y);
+  const loop = new THREE.CatmullRomCurve3([
+    start,
+    start.clone().lerp(needleEye, 0.3).add(new THREE.Vector3(4 * (1 - k), 2, 3 * (1 - k))),
+    start.clone().lerp(needleEye, 0.7).add(new THREE.Vector3(5 * (1 - k), 0, 4 * (1 - k))),
+    needleEye,
+  ]);
+  needleThread.geometry.dispose();
+  needleThread.geometry = new THREE.TubeGeometry(loop, 24, 0.10, 5, false);
   needleThread.material.color.copy(action.dye);
 }
 
@@ -689,14 +773,15 @@ function moveNeedle() {
 
 function viewport() {
   // The header covers the top of the page; keep the cloth clear of it.
-  return { top: 92, bottom: 26, side: 40 };
+  return { top: 40, bottom: innerWidth <= 700 ? 140 : 112, side: innerWidth <= 700 ? 20 : 44,
+    right: innerWidth <= 700 ? 20 : panel.offsetWidth + innerWidth * 0.055 };
 }
 
 function fitDistance() {
   const { w, h } = state.size;
   const v = viewport();
   const availH = Math.max(120, innerHeight - v.top - v.bottom);
-  const availW = Math.max(120, innerWidth - v.side * 2);
+  const availW = Math.max(120, innerWidth - v.side - v.right);
   const tall = h + 30; // rod above, fringe below
   const wide = w + 34;
   const pxPerUnit = Math.min(availH / tall, availW / wide);
@@ -704,20 +789,24 @@ function fitDistance() {
 }
 
 function frame(follow) {
+  state.cameraTarget = null;
   const { w, h } = state.size;
   const fit = fitDistance();
   state.fit = fit.all;
   const v = viewport();
-  const legible = innerHeight / (2 * TAN * 2.3); // 2.3 px per cell: motifs still read
-  // Show the whole cloth unless that would shrink the designs to smudges.
-  const whole = params.get("fit") === "all" || innerHeight / (2 * TAN * fit.all) >= 1.5;
-  const d = whole ? fit.all : Math.min(fit.all, Math.max(fit.width, legible));
-  const shift = ((v.top - v.bottom) / 2) * ((2 * TAN * d) / innerHeight);
+  const whole = state.overview ?? params.get("fit") === "all";
+  const overviewButton = document.querySelector("#overview");
+  overviewButton.setAttribute("aria-pressed", String(!!whole));
+  overviewButton.textContent = whole ? "Return to detail ↙" : "Frame the cloth ↗";
+  const d = whole ? fit.all : Math.min(fit.all, fit.width);
+  const units = (2 * TAN * d) / innerHeight;
   state.cam.d = d;
-  state.cam.x = w / 2;
-  state.cam.y = h / 2 - 1 + shift;
-  state.follow = d < fit.all - 1 && follow ? { shift } : null;
-  if (d < fit.all - 1) state.cam.y = follow ? viewHeight() / 2 - 14 + shift : h + 14 - viewHeight() / 2 + shift;
+  state.cam.x = w / 2 + (v.right - v.side) * units / 2;
+  // The newest work is at the top. The close view keeps the rod in frame;
+  // an explicit overview frames the complete cloth in the available area.
+  state.cam.y = whole ? h / 2 + (v.top - v.bottom) * units / 2
+    : h + 12 - (innerHeight / 2 - v.top) * units;
+  state.follow = follow ? { shift: 0 } : null;
   if (params.has("zoom")) {
     // ?zoom=x,y,d frames a detail, in cloth units.
     const [x, y, dist] = params.get("zoom").split(",").map(Number);
@@ -771,6 +860,7 @@ function pick(clientX, clientY) {
     if (Math.abs(p.x - action.wx) <= action.width / 2 && Math.abs(p.y - action.wy) <= action.height / 2) return { action };
   }
   for (const band of state.weave.bands) {
+    if (!band.actions.some((action) => action.birth <= clock.value)) continue;
     const t = band.tag;
     if (t && Math.abs(p.x - t.x) <= t.w / 2 + 0.5 && Math.abs(p.y - t.y) <= t.h / 2 + 0.5) return { band };
     const bx = state.size.ox + band.x;
@@ -812,62 +902,280 @@ function describeAction(action) {
   ];
   for (const link of links) {
     const other = link.from === action ? link.to : link.from;
-    rows.push(`<p>${link.from === action ? "yarn out" : "yarn in"} · ${esc(link.kind)} · ${esc(other.band.sessionId)}</p>`);
+    rows.push(`<p>${esc(link.kind)} · <button data-action-id="${esc(other.id)}">${esc(other.band.sessionId)} ↗</button></p>`);
   }
   const detail = action.events.at(-1).detail ?? {};
   for (const [key, value] of Object.entries(detail)) rows.push(`<p>${esc(key)}: ${esc(value)}</p>`);
   rows.push(`<p><code>${action.events.map((event) => esc(event.id) + (event.hash ? " · " + esc(String(event.hash).replace(/^sha256:/, "").slice(0, 12)) : "")).join("<br>")}</code></p>`);
-  return `<h2>${esc(title)}</h2>` + rows.join("");
+  return (detail.summary ? `<p class="memory-summary">${esc(detail.summary)}</p>` : "")
+    + `<details><summary>${esc(title)} · details</summary>${rows.join("")}</details>`;
 }
 
 function describeBand(band) {
   const title = band.failure && band.completion ? "Completed, with a frayed pass"
     : band.completion ? "Bound and finished"
     : band.status === "failed" ? "Frayed, unfinished" : "Still on the loom";
-  return `<h2>${esc(title)}</h2><p><b>${esc(band.actor)}</b> · ${esc(band.sessionId)}</p>`
+  return `<details><summary>${esc(title)}</summary><p><b>${esc(band.actor)}</b> · ${esc(band.sessionId)}</p>`
     + `<p>${band.eventCount} sealed events · ${band.actions.length} motifs · ${band.toolCount} tools · ${band.approvalCount} approvals</p>`
-    + `<p><code>${esc(new Date(band.t0).toLocaleString())} → ${esc(new Date(band.t1).toLocaleString())}</code></p>`;
+    + `<p><code>${esc(new Date(band.t0).toLocaleString())} → ${esc(new Date(band.t1).toLocaleString())}</code></p></details>`;
 }
 
-// The inspector opens where the cloth was clicked and stays pinned to that
-// spot on the cloth while the view moves.
-function select(hit, at) {
+// Selection stays in the side inspector while the cloth moves beneath it.
+function select(hit) {
   state.selected = hit;
   if (!hit) {
-    panel.classList.remove("show");
-    hoop.visible = false;
-    state.pin = null;
+    inspector.innerHTML = "";
   } else {
-    panel.innerHTML = hit.action ? describeAction(hit.action) : describeBand(hit.band);
+    inspector.innerHTML = hit.action ? describeAction(hit.action) : describeBand(hit.band);
     panel.scrollTop = 0;
-    panel.classList.add("show");
-    hoop.visible = !!hit.action && !hit.action.border;
-    if (hoop.visible) hoop.position.set(hit.action.wx, hit.action.wy - 0.5, 0);
-    if (at) state.pin = at;
-    placePanel();
+    panel.classList.add("mobile-open");
+    document.querySelector("#inspect-toggle").setAttribute("aria-expanded", "true");
+  }
+  updateInspector();
+  applyFocus();
+  state.dirty = true;
+}
+
+// A second camera renders the actual selected embroidery, including its
+// yarn, folds and working needle. No screenshot or decorative stand-in.
+const detailRenderer = new THREE.WebGLRenderer({ canvas: detailCanvas, antialias: true, alpha: false, powerPreference: "low-power" });
+detailRenderer.toneMapping = renderer.toneMapping;
+detailRenderer.toneMappingExposure = renderer.toneMappingExposure;
+const detailCamera = new THREE.PerspectiveCamera(26, 1, 0.1, 1000);
+function renderDetail() {
+  const action = state.selected?.action ?? state.selected?.band?.actions.find((a) => !a.border)
+    ?? state.detailAction ?? state.weave?.actions.find((a) => !a.border);
+  if (!action) return;
+  const width = detailCanvas.clientWidth, height = detailCanvas.clientHeight;
+  if (!width || !height) return;
+  const signature = `${action.id}:${clock.value}:${width}:${height}`;
+  if (state.detailSignature === signature && !state.detailDirty) return;
+  state.detailSignature = signature;
+  state.detailDirty = false;
+  const ratio = Math.min(devicePixelRatio || 1, 2);
+  if (detailCanvas.width !== Math.round(width * ratio) || detailCanvas.height !== Math.round(height * ratio)) {
+    detailRenderer.setPixelRatio(ratio);
+    detailRenderer.setSize(width, height, false);
+  }
+  detailCamera.aspect = width / height;
+  const d = Math.max(17, Math.min(34, action.width * 2.7));
+  detailCamera.position.set(action.wx + 2.5, action.wy - 4, d);
+  detailCamera.lookAt(action.wx, action.wy, clothHeight(action.wx, action.wy));
+  detailCamera.updateProjectionMatrix();
+  detailRenderer.render(scene, detailCamera);
+}
+
+function updateLegend(actors, dyes) {
+  const legend = document.querySelector("#legend");
+  legend.innerHTML = actors.map((actor) => `<button data-actor="${esc(actor)}" aria-pressed="${state.actor === actor}"><i style="--dye:#${dyes.get(actor)[TONE.dye].getHexString()}"></i>${esc(actor === "claude" ? "Claude" : actor === "codex" ? "Codex" : actor)}</button>`).join("");
+}
+
+function updateInspector() {
+  const hit = state.selected;
+  const action = hit?.action;
+  const memory = action?.type === "agent.reply.summarized" || action?.type === "agent.memory.recalled";
+  const connected = state.weave?.links.filter((link) => action ? link.from === action || link.to === action
+    : hit?.band ? link.from.band === hit.band || link.to.band === hit.band : link.kind === "memory") ?? [];
+  const readers = new Set(connected.filter((link) => link.kind === "memory").map((link) => link.to.key));
+  document.querySelector("#inspect-title").textContent = memory || !hit && readers.size ? "Shared memory"
+    : hit ? "Session thread" : "On the loom";
+  document.querySelector("#inspect-subtitle").textContent = action?.events.at(-1)?.detail?.tags?.join?.(", ")
+    || action?.events.at(-1)?.correlation || action?.band.sessionId || hit?.band?.sessionId
+    || (state.weave?.actions.length ? `${state.weave.bands.length} sessions · ${state.weave.actions.length} motifs` : "Select a stitch to explore");
+  document.querySelector("#connection-count").textContent = action?.type === "agent.memory.recalled"
+    ? `Recalled ${connected.filter((link) => link.kind === "memory").length} summaries`
+    : memory || !hit && readers.size
+    ? `Read by ${readers.size} session${readers.size === 1 ? "" : "s"}`
+    : `${connected.length} connection${connected.length === 1 ? "" : "s"}`;
+  traceButton.setAttribute("aria-pressed", String(state.trace));
+  traceButton.disabled = !state.weave?.actions.length;
+}
+
+function applyFocus() {
+  if (!state.weave) return;
+  state.detailDirty = true;
+  const selection = state.selected ?? state.hover;
+  const ids = connectedActions(state.weave.links, selection);
+  const bandKeys = new Set(state.weave.actions.filter((action) => ids.has(action.id)).map((action) => action.key));
+  const active = !!state.actor || !!selection && (state.trace || !state.selected);
+  const byId = new Map(state.weave.actions.map((action) => [action.id, action]));
+  const byKey = new Map(state.weave.bands.map((band) => [band.key, band]));
+  const linen = new THREE.Color("#b9aa8a");
+  for (const entry of state.focusMeshes) {
+    const colors = entry.mesh.instanceColor;
+    entry.owners.forEach((owner, i) => {
+      const action = byId.get(owner);
+      const band = byKey.get(owner);
+      const relevant = !owner || (state.actor ? (action?.actor ?? band?.actor) === state.actor : ids.has(owner) || bandKeys.has(owner));
+      const fade = active && !relevant ? 0.66 : 0;
+      for (let c = 0; c < 3; c++) colors.array[i * 3 + c] = entry.colors[i * 3 + c] * (1 - fade) + [linen.r, linen.g, linen.b][c] * fade;
+    });
+    colors.needsUpdate = true;
+  }
+  for (const yarn of state.yarns) {
+    const relevant = state.actor ? yarn.link.from.actor === state.actor || yarn.link.to.actor === state.actor
+      : ids.has(yarn.link.from.id) && ids.has(yarn.link.to.id);
+    const fade = active && !relevant;
+    yarn.focused = !fade;
+    yarn.mesh.material.transparent = true;
+    yarn.mesh.material.opacity = fade ? 0.15 : 1;
+    yarn.shade.visible = !fade;
+    for (const knot of yarn.knots) {
+      knot.material.transparent = true;
+      knot.material.opacity = fade ? 0.15 : 1;
+    }
   }
   state.dirty = true;
 }
 
-const pinned = new THREE.Vector3();
-function placePanel() {
-  if (!state.pin || !state.selected) return;
-  pinned.copy(state.pin).project(camera);
-  const x = (pinned.x * 0.5 + 0.5) * innerWidth;
-  const y = (-pinned.y * 0.5 + 0.5) * innerHeight;
-  const w = panel.offsetWidth;
-  const h = panel.offsetHeight;
-  // Open down and to the right of the pointer; flip at the window's edge.
-  const left = x + 14 + w > innerWidth - 12 ? x - 14 - w : x + 14;
-  const top = y + 14 + h > innerHeight - 12 ? y - 14 - h : y + 14;
-  panel.style.left = Math.max(12, Math.min(innerWidth - w - 12, left)) + "px";
-  panel.style.top = Math.max(12, Math.min(innerHeight - h - 12, top)) + "px";
-  panel.style.transformOrigin = `${left < x ? "100%" : "0"} ${top < y ? "100%" : "0"}`;
+function frameConnections() {
+  const ids = connectedActions(state.weave.links, state.selected);
+  const actions = state.weave.actions.filter((action) => ids.has(action.id));
+  if (!actions.length) return;
+  const x0 = Math.min(...actions.map((a) => a.wx - a.width / 2)) - 12;
+  const x1 = Math.max(...actions.map((a) => a.wx + a.width / 2)) + 12;
+  const y0 = Math.min(...actions.map((a) => a.wy - a.height / 2)) - 12;
+  const y1 = Math.max(...actions.map((a) => a.wy + a.height / 2)) + 12;
+  const v = viewport();
+  const px = Math.min((innerWidth - v.side - v.right) / (x1 - x0), (innerHeight - v.top - v.bottom) / (y1 - y0));
+  const units = 1 / px;
+  const target = { d: innerHeight * units / (2 * TAN), x: (x0 + x1) / 2 + (v.right - v.side) * units / 2,
+    y: (y0 + y1) / 2 + (v.top - v.bottom) * units / 2 };
+  if (STILL) Object.assign(state.cam, target);
+  else state.cameraTarget = target;
+  state.touched = true;
+  state.followLive = false;
+  state.follow = null;
+  updatePlayback();
+  state.dirty = true;
 }
+inspector.addEventListener("click", (event) => {
+  const id = event.target.closest("button[data-action-id]")?.dataset.actionId;
+  const action = id && state.weave?.actions.find((action) => action.id === id);
+  if (action) { select({ action }); if (state.trace) frameConnections(); }
+});
+
+function formatTime(time) {
+  return new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+function updatePlayback() {
+  const actions = state.weave?.actions ?? [];
+  const start = actions[0]?.t, end = Math.max(...actions.map((action) => action.t1));
+  if (start !== undefined) {
+    document.querySelector("#date").textContent = new Date(end).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }).toUpperCase();
+    document.querySelector("#start-time").textContent = formatTime(start);
+    document.querySelector("#mid-time").textContent = formatTime(start + (end - start) * state.fraction);
+    document.querySelector("#end-time").textContent = formatTime(end);
+    scrubber.setAttribute("aria-valuetext", formatTime(start + (end - start) * state.fraction));
+  }
+  scrubber.value = Math.round(state.fraction * 1000);
+  scrubber.disabled = !actions.length;
+  playButton.disabled = !actions.length;
+  const label = state.playback === "playing" ? "Pause replay" : "Replay the weave";
+  if (playButton.getAttribute("aria-label") !== label) {
+    playButton.setAttribute("aria-label", label);
+    playButton.innerHTML = state.playback === "playing"
+      ? '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3h4v14H4zm8 0h4v14h-4Z"/></svg>'
+      : '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 2 13 8L5 18Z"/></svg>';
+  }
+  liveButton.setAttribute("aria-pressed", String(state.playback === "live"));
+  followButton.setAttribute("aria-pressed", String(state.followLive));
+}
+
+function prepareReplay() {
+  if (state.replay) return;
+  state.replay = true;
+  const chosenId = state.selected?.action?.id;
+  const chosenBand = state.selected?.band?.key;
+  build(state.spec, null);
+  clock.value = state.sewnUntil;
+  if (chosenId) {
+    const action = state.weave.actions.find((a) => a.id === chosenId);
+    if (action) select({ action });
+  } else if (chosenBand) {
+    const band = state.weave.bands.find((band) => band.key === chosenBand);
+    select(band ? { band } : null);
+  }
+}
+function seek(fraction) {
+  prepareReplay();
+  state.fraction = Math.max(0, Math.min(1, fraction));
+  clock.value = sewingAt(state.weave.actions, state.fraction, state.sewnUntil);
+  if (state.selected?.action?.birth > clock.value) select(null);
+  updateYarns();
+  moveNeedle();
+  updatePlayback();
+  state.dirty = true;
+}
+function goLive(follow = false) {
+  state.playback = "live";
+  state.fraction = 1;
+  state.followLive = follow;
+  clock.value = state.sewnUntil;
+  updateYarns();
+  moveNeedle();
+  if (follow) { state.overview = false; state.touched = false; frame(true); }
+  updatePlayback();
+  state.dirty = true;
+}
+playButton.addEventListener("click", () => {
+  if (!state.weave?.actions.length) return;
+  if (state.playback === "playing") state.playback = "paused";
+  else {
+    prepareReplay();
+    if (state.fraction >= 1) seek(0);
+    state.playback = "playing";
+    state.followLive = false;
+  }
+  updatePlayback();
+});
+scrubber.addEventListener("input", () => {
+  state.playback = "paused";
+  state.followLive = false;
+  seek(Number(scrubber.value) / 1000);
+});
+document.querySelector("#speed").addEventListener("change", (event) => { state.speed = Number(event.target.value); });
+liveButton.addEventListener("click", () => goLive());
+followButton.addEventListener("click", () => {
+  if (!state.weave) return;
+  const follow = !state.followLive;
+  goLive(follow);
+  if (!follow) state.follow = null;
+});
+traceButton.addEventListener("click", () => {
+  if (!state.selected) {
+    const link = state.weave?.links.find((link) => link.kind === "memory");
+    if (link) select({ action: link.from });
+  }
+  state.trace = !state.trace;
+  if (state.trace && state.selected) frameConnections();
+  updateInspector();
+  applyFocus();
+});
+document.querySelector("#legend").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-actor]");
+  if (!button) return;
+  state.actor = state.actor === button.dataset.actor ? null : button.dataset.actor;
+  for (const entry of button.parentElement.children) entry.setAttribute("aria-pressed", String(entry.dataset.actor === state.actor));
+  applyFocus();
+});
+document.querySelector("#inspect-toggle").addEventListener("click", () => {
+  const open = panel.classList.toggle("mobile-open");
+  document.querySelector("#inspect-toggle").setAttribute("aria-expanded", String(open));
+  state.dirty = true;
+});
+document.querySelector("#overview").addEventListener("click", () => {
+  state.overview = !(state.overview ?? params.get("fit") === "all");
+  state.followLive = false;
+  state.touched = false;
+  frame(false);
+  updatePlayback();
+});
 
 // ---------------------------------------------------------------- input
 
 canvas.addEventListener("pointerdown", (event) => {
+  state.cameraTarget = null;
   state.drag = { x: event.clientX, y: event.clientY, cx: state.cam.x, cy: state.cam.y, moved: false };
   canvas.setPointerCapture(event.pointerId);
 });
@@ -881,6 +1189,8 @@ canvas.addEventListener("pointermove", (event) => {
     if (Math.hypot(dx, dy) > 4 && !state.drag.moved) {
       state.drag.moved = true;
       state.follow = null;
+      state.followLive = false;
+      updatePlayback();
       state.touched = true;
     }
     if (!state.drag.moved) return;
@@ -890,6 +1200,10 @@ canvas.addEventListener("pointermove", (event) => {
     tip.hidden = true;
   } else {
     const hit = pick(event.clientX, event.clientY);
+    if (state.hover?.action !== hit?.action || state.hover?.band !== hit?.band) {
+      state.hover = hit;
+      applyFocus();
+    }
     canvas.style.cursor = hit ? "pointer" : "grab";
     if (hit?.action) {
       const a = hit.action;
@@ -903,6 +1217,8 @@ canvas.addEventListener("pointermove", (event) => {
 });
 canvas.addEventListener("pointerleave", () => {
   tip.hidden = true;
+  state.hover = null;
+  applyFocus();
   state.tilt.tx = state.tilt.ty = 0;
   state.dirty = true;
 });
@@ -912,15 +1228,15 @@ canvas.addEventListener("pointerup", (event) => {
   if (!drag || drag.moved) return;
   const hit = pick(event.clientX, event.clientY);
   tip.hidden = true;
-  select(hit, hit ? clothPoint(event.clientX, event.clientY) : null);
+  select(hit);
 });
-// A click anywhere off the cloth's stitches, or outside the canvas, dismisses.
-addEventListener("pointerdown", (event) => {
-  if (state.selected && event.target !== canvas && !panel.contains(event.target)) select(null);
-});
+
 canvas.addEventListener("wheel", (event) => {
   event.preventDefault();
+  state.cameraTarget = null;
   state.follow = null;
+  state.followLive = false;
+  updatePlayback();
   state.touched = true;
   const before = clothPoint(event.clientX, event.clientY);
   state.cam.d *= Math.exp(Math.max(-1, Math.min(1, event.deltaY / 240)) * 0.35);
@@ -934,8 +1250,24 @@ canvas.addEventListener("wheel", (event) => {
   state.dirty = true;
 }, { passive: false });
 addEventListener("keydown", (event) => {
-  if (event.key === "Escape") select(null);
+  if (event.target.matches("input, select, button, summary")) return;
+  if (event.key === "Escape") {
+    select(null);
+    panel.classList.remove("mobile-open");
+    document.querySelector("#inspect-toggle").setAttribute("aria-expanded", "false");
+  }
+  if (event.target === canvas && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+    event.preventDefault();
+    const visible = state.weave?.actions.filter((a) => a.birth <= clock.value) ?? [];
+    const index = visible.indexOf(state.selected?.action);
+    const direction = ["ArrowLeft", "ArrowDown"].includes(event.key) ? -1 : 1;
+    const action = visible[(index + direction + visible.length) % visible.length];
+    if (action) { select({ action }); frameConnections(); }
+  }
   if (event.key === "0" || event.key === "f") {
+    state.overview = true;
+    state.followLive = false;
+    updatePlayback();
     state.cam.d = state.fit;
     state.cam.x = state.size.w / 2;
     state.touched = false;
@@ -957,20 +1289,37 @@ function tick(now) {
   const previous = state.last;
   state.last = now;
   if (!state.weave) return;
-  const sewing = FREEZE === null && clock.value < state.sewnUntil;
+  const delta = Math.min(0.1, Math.max(0, (now - (previous ?? now)) / 1000));
+  if (state.playback === "playing" && !document.hidden) {
+    seek(state.fraction + delta * state.speed / Math.max(18, Math.min(90, state.weave.actions.length * 0.4)));
+    if (state.fraction >= 1) { state.playback = "paused"; updatePlayback(); }
+  }
+  const sewing = state.playback === "live" && FREEZE === null && clock.value < state.sewnUntil;
   if (sewing) {
     // Sewing time only runs while there is sewing to do, so stitches appended
     // later are drawn through rather than appearing whole.
     clock.value += Math.min(0.25, Math.max(0, (now - (previous ?? now)) / 1000));
     updateYarns();
     moveNeedle();
-    if (state.follow) {
+    if (state.followLive && state.follow) {
       // Keep the needle in view: ride up the cloth with the newest stitch.
       let front = 0;
       for (const action of state.weave.actions) if (action.birth <= clock.value && action.wy > front) front = action.wy;
       const target = Math.max(viewHeight() / 2 - 14, Math.min(state.size.h + 14 - viewHeight() / 2, front - viewHeight() * 0.18)) + state.follow.shift;
       state.cam.y += (target - state.cam.y) * 0.06;
     }
+    state.dirty = true;
+  }
+  if (!sewing && state.playback === "live" && !state.parked) { moveNeedle(); state.parked = true; state.dirty = true; }
+  if (sewing) state.parked = false;
+  if (state.cameraTarget) {
+    let distance = 0;
+    for (const key of ["x", "y", "d"]) {
+      const gap = state.cameraTarget[key] - state.cam[key];
+      state.cam[key] += gap * 0.12;
+      distance += Math.abs(gap);
+    }
+    if (distance < 0.01) { Object.assign(state.cam, state.cameraTarget); state.cameraTarget = null; }
     state.dirty = true;
   }
   const dx = state.tilt.tx - state.tilt.x;
@@ -984,8 +1333,8 @@ function tick(now) {
   state.dirty = false;
   placeCamera();
   camera.updateMatrixWorld();
-  placePanel();
   renderer.render(scene, camera);
+  renderDetail();
 }
 
 function signature(spec) {
@@ -1033,20 +1382,29 @@ async function boot() {
   const days = spec.filter?.days;
   const range = days ? "LAST " + days + (days === 1 ? " DAY" : " DAYS") : "WHOLE LOG";
   const note = document.querySelector("header p");
-  note.textContent = corr ? range + " · GOAL CORRELATION · " + corr : range;
+  const date = spec.stitches?.at(-1)?.ts;
+  note.textContent = date ? new Date(date).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }).toUpperCase() : "";
+  note.title = corr ? range + " · GOAL CORRELATION · " + corr : range;
   note.hidden = false;
   state.spec = spec;
   state.signature = signature(spec);
   build(spec, null);
   empty.hidden = state.weave.actions.length > 0;
-  frame(!STILL && FREEZE === null);
+  frame(false);
+  updateInspector();
+  updatePlayback();
   document.documentElement.dataset.woven = "1";
-  if (STILL || FREEZE !== null) return;
+  if (params.has("still") || FREEZE !== null) return;
   // The log is append-only, so new lines only ever add stitches.
+  let refreshing = false;
   setInterval(async () => {
-    if (document.hidden) return;
+    if (refreshing || document.hidden || state.playback !== "live") return;
+    refreshing = true;
     try {
       const next = await load();
+      // A response started in live mode must not replace a replay selected
+      // while that request was in flight.
+      if (state.playback !== "live") return;
       const sig = signature(next);
       if (sig === state.signature) return;
       const known = new Set(state.weave.actions.filter((action) => action.birth <= clock.value).map((action) => action.id));
@@ -1056,21 +1414,30 @@ async function boot() {
       state.spec = next;
       state.signature = sig;
       const chosen = state.selected;
+      state.replay = false;
       build(next, known);
+      if (state.followLive) frame(true);
       empty.hidden = state.weave.actions.length > 0;
       // Left alone, the view keeps the whole cloth in frame as it grows.
       if (state.touched) {
         state.fit = fitDistance().all;
         state.cam.x += state.size.ox - before.ox;
-      } else frame(false);
+      } else frame(state.followLive);
+      liveButton.title = "Showing the latest log";
       const again = chosen?.action && state.weave.actions.find((action) => action.id === chosen.action.id);
       if (again) {
-        // The cloth may have grown around the pin; move it with its design.
-        const pin = state.pin?.clone().add(new THREE.Vector3(again.wx - chosen.action.wx, again.wy - chosen.action.wy, 0));
-        select({ action: again }, pin);
-      } else select(null);
+        select({ action: again });
+      } else {
+        const band = chosen?.band && state.weave.bands.find((band) => band.key === chosen.band.key);
+        select(band ? { band } : null);
+      }
+      updateInspector();
+      updatePlayback();
     } catch (error) {
+      liveButton.title = "Could not refresh the log; retrying automatically";
       console.warn("tapestry: could not refresh the weave;", error); // the next poll tries again
+    } finally {
+      refreshing = false;
     }
   }, 4000);
 }

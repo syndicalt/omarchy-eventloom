@@ -6,56 +6,91 @@
 <title>Eventloom Tapestry</title>
 <link rel="icon" href="data:,">
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: dark; --cream: #eee3cc; --muted: #aa9c86; --gold: #d9b575; --line: rgba(218,190,146,.22); --sidebar: clamp(270px, 21vw, 340px) }
   * { box-sizing: border-box }
   [hidden] { display: none !important }
-  body {
-    margin: 0; overflow: hidden;
-    background: #120e0b;
-    color: #f3ead8;
-    font: 13px "Palatino Linotype", Palatino, Georgia, serif;
-  }
-  canvas { display: block; width: 100vw; height: 100vh; cursor: grab }
-  canvas:active { cursor: grabbing }
-  header { position: fixed; z-index: 2; top: 18px; left: 0; right: 0; text-align: center; pointer-events: none }
-  h1 { font: 28px "Palatino Linotype", Palatino, Georgia, serif; font-weight: 500; letter-spacing: .08em; margin: 0 0 2px; color: #f6ecd9 }
-  header p { margin: 0; color: #f0e2cc; letter-spacing: .12em; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace }
-  #hint { position: fixed; z-index: 2; right: 32px; top: 28px; color: #f0e2cc; letter-spacing: .04em; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace }
-  @media (max-width: 900px) { #hint { display: none } }
-  #panel {
-    position: fixed; z-index: 3; left: 0; top: 0; width: min(320px, calc(100vw - 24px));
-    max-height: min(420px, calc(100vh - 24px)); overflow: auto;
-    padding: 14px 16px 12px; border-radius: 3px 9px 9px 9px;
-    background: rgba(246, 236, 216, .97); color: #3a2c1e;
-    border: 1px solid #8d7350; border-top: 4px solid #6b4c7a;
-    box-shadow: 0 14px 34px rgba(0,0,0,.42);
-    opacity: 0; visibility: hidden; transform: scale(.94); transform-origin: 0 0;
-    transition: opacity .12s ease, transform .12s ease, visibility 0s .12s;
-  }
-  #panel.show { opacity: 1; visibility: visible; transform: none; transition: opacity .12s ease, transform .12s ease }
-  #panel h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; color: #2c2116 }
-  #panel p { color: #5c4b38; line-height: 1.55; margin: 5px 0 }
-  #panel b { color: #2c2116 }
-  #panel code { color: #7a6248; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace }
-  #empty {
-    position: fixed; inset: 0; display: grid; place-items: center;
-    color: #d8c8a8; font: 20px "Palatino Linotype", Palatino, Georgia, serif;
-    pointer-events: none; text-align: center;
-  }
-  #tip {
-    position: fixed; z-index: 3; pointer-events: none; padding: 5px 9px; border-radius: 3px;
-    background: rgba(28, 20, 14, .92); color: #f3ead8; border: 1px solid rgba(214, 186, 140, .35);
-    font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap;
-  }
-  #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, transparent 52%, rgba(8, 5, 3, .62) 100%) }
-  #empty small { display: block; margin-top: 8px; font: 10px ui-monospace, monospace; color: #b39c78; letter-spacing: .08em }
+  body { margin: 0; overflow: hidden; background: #1a140f; color: var(--cream); font: 15px Georgia, "Palatino Linotype", serif }
+  button, select, input { font: inherit; color: inherit }
+  button { cursor: pointer; background: none; border: 0 }
+  button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 5px }
+  canvas#cloth { display: block; width: 100vw; height: 100vh; cursor: grab; touch-action: none }
+  canvas#cloth:active { cursor: grabbing }
+  header { position: fixed; z-index: 2; top: 16px; left: 4%; right: 3.5%; display: flex; align-items: center; gap: 23px; pointer-events: none }
+  h1 { font-size: 30px; font-weight: 400; letter-spacing: .065em; margin: 0; color: #f6ecd9 }
+  header p { border-left: 1px solid #8f7b60; padding-left: 23px; margin: 0; color: #cebea3; letter-spacing: .10em; font-size: 14px }
+  #follow { margin-left: auto; pointer-events: auto; letter-spacing: .045em; padding: 7px 0 7px 12px; font-size: 17px }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #796e5d; margin-right: 10px; vertical-align: 1px }
+  [aria-pressed="true"] .dot { background: var(--gold); box-shadow: 0 0 12px #d9b57522 }
+  #panel { position: fixed; z-index: 3; right: 2.6%; top: 10%; bottom: 17.5%; width: var(--sidebar); overflow-y: auto; scrollbar-width: thin; scrollbar-color: #6b5842 transparent; padding: 30px 27px 23px; border-radius: 15px; background: linear-gradient(135deg, #2b231be8, #110e0ae8); border: 1px solid var(--line); box-shadow: 0 14px 40px #0003; backdrop-filter: blur(14px) }
+  #panel h2 { font-weight: 400; font-size: 29px; letter-spacing: .035em; margin: 0 0 10px; overflow-wrap: anywhere }
+  #panel p { color: var(--muted); line-height: 1.55; margin: 9px 0; overflow-wrap: anywhere }
+  #panel b { color: #d9c9ad; font-weight: 400 }
+  #panel code { color: #ac9a7e; font: 11px ui-monospace, monospace; overflow-wrap: anywhere }
+  #panel .subtitle { font: 14px ui-monospace, monospace; letter-spacing: .04em; margin-bottom: 27px }
+  .panel-row { border-top: 1px solid var(--line); padding: 21px 0; display: flex; gap: 15px; align-items: center; line-height: 1.5; letter-spacing: .025em }
+  .panel-row svg { flex: 0 0 25px; width: 25px; height: 25px; fill: none; stroke: #a6977f; stroke-width: 1.3 }
+  #trace { text-align: left; width: 100%; color: #d9c9ad }
+  #trace svg { stroke: var(--gold) }
+  #trace[aria-pressed="true"] { color: #e7c88f }
+  #inspect-body { border-top: 1px solid var(--line); padding-top: 15px }
+  #inspect-body:empty { display: none }
+  #inspect-body button { padding: 0; color: var(--gold); text-decoration: underline; text-underline-offset: 3px }
+  #inspect-body .memory-summary { font-size: 13px; line-height: 1.6; color: #c6b599 }
+  #inspect-body details { color: var(--muted); font-size: 12px; margin-top: 12px }
+  #inspect-body summary { cursor: pointer; padding: 8px 0 }
+  #detail { margin: 14px 0 0 }
+  #detail canvas { width: 100%; aspect-ratio: 1 / 1.1; display: block; border-radius: 9px; background: #b9a180 }
+  #detail figcaption { font: 12px ui-monospace, monospace; letter-spacing: .06em; margin-top: 15px; color: var(--muted) }
+  #hint { color: #97866a; font: 10px ui-monospace, monospace; margin-top: 18px; line-height: 1.9 }
+  #playback { position: fixed; z-index: 4; bottom: 2%; left: 2.8%; right: 2.8%; min-height: 82px; display: flex; align-items: center; gap: 23px; padding: 17px 27px; border-radius: 15px; border: 1px solid var(--line); background: linear-gradient(120deg, #282119ee, #17120eee); box-shadow: 0 12px 36px #0005; backdrop-filter: blur(18px) }
+  #play { flex: 0 0 46px; height: 46px; border: 1px solid #8d7e64; border-radius: 50%; display: grid; place-items: center; padding: 0 }
+  #play svg { width: 18px; height: 18px; fill: #ddcba8 }
+  #timeline { flex: 1; min-width: 80px; display: flex; gap: 18px; align-items: center }
+  #timeline time { font-size: 13px; white-space: nowrap; color: #d9cbb4 }
+  #scrub-wrap { flex: 1; min-width: 50px; position: relative; padding: 8px 0 12px }
+  #scrubber { display: block; width: 100%; height: 18px; margin: 0; accent-color: var(--gold); appearance: none; background: transparent; cursor: ew-resize }
+  #scrubber::-webkit-slider-runnable-track { height: 1px; background: #8b785d }
+  #scrubber::-moz-range-track { height: 1px; background: #8b785d }
+  #scrubber::-webkit-slider-thumb { appearance: none; background: #e7c88f; border: 1px solid #f1d7a9; width: 14px; height: 14px; border-radius: 50%; margin-top: -6px }
+  #scrubber::-moz-range-thumb { background: #e7c88f; border: 1px solid #f1d7a9; width: 13px; height: 13px; border-radius: 50% }
+  #mid-time { position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); color: #8d7e68; font-size: 11px }
+  #speed { border: 1px solid var(--line); border-radius: 13px; background: #2b241b; padding: 9px 12px; font-size: 14px }
+  #live { white-space: nowrap; font-size: 14px; padding: 10px 0 }
+  #legend { border-left: 1px solid var(--line); padding-left: 28px; display: flex; gap: 23px; align-items: center }
+  #legend button { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 13px; white-space: nowrap }
+  #legend i { width: 15px; height: 15px; border-radius: 50%; display: block; background: var(--dye) }
+  #legend button[aria-pressed="true"] { color: #f8dfaf }
+  #inspect-toggle { display: none }
+  #overview { position: fixed; left: 4%; bottom: 16%; z-index: 2; font: 11px ui-monospace, monospace; letter-spacing: .05em; border: 1px solid var(--line); background: #211a13dc; border-radius: 20px; padding: 9px 14px; color: #d9c9ad }
+  #empty { position: fixed; inset: 20% calc(var(--sidebar) + 7%) 25% 5%; display: grid; place-content: center; text-align: center; pointer-events: none; font-size: 22px; line-height: 1.6 }
+  #empty small { display: block; font: 12px ui-monospace, monospace; color: #b39c78; margin-top: 12px }
+  #tip { position: fixed; z-index: 5; pointer-events: none; padding: 8px 12px; border-radius: 5px; background: #201910ef; color: var(--cream); border: 1px solid var(--line); font: 11px ui-monospace, monospace; max-width: calc(100vw - 24px) }
+  #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 42% 45%, transparent 45%, #08050380 100%) }
+  @media (max-width: 1000px) { :root { --sidebar: 245px } #panel { padding: 22px 20px; right: 2%; } #playback { gap: 14px; padding: 15px 20px } #legend { gap: 13px; padding-left: 16px } #legend button { font-size: 12px; gap: 6px } #timeline { gap: 10px } }
+  @media (max-width: 700px) { header { left: 5%; top: 18px; gap: 14px } h1 { font-size: 24px } header p { font-size: 10px; padding-left: 14px } #follow { font-size: 12px } #panel:not(.mobile-open) { display: none } #inspect-toggle { display: block; position: fixed; z-index: 4; right: 5%; bottom: 145px; padding: 9px 14px; border: 1px solid var(--line); border-radius: 20px; background: #211a13ed; color: #d9c9ad; font: 10px ui-monospace, monospace } #panel { top: auto; right: 4%; bottom: 145px; width: 205px; max-height: 43vh; padding: 19px; } #panel h2 { font-size: 22px } #detail canvas { aspect-ratio: 1.4 } #detail { margin-top: 10px } .panel-row { padding: 13px 0; font-size: 12px } #hint { display: none } #playback { bottom: 18px; left: 4%; right: 4%; min-height: 100px; flex-wrap: wrap; gap: 10px 13px; padding: 13px 16px } #play { flex-basis: 34px; height: 34px } #timeline { flex-basis: calc(100% - 50px) } #speed { padding: 5px 8px; font-size: 12px } #legend { margin-left: auto; gap: 12px; padding-left: 12px } #legend i { width: 10px; height: 10px } #legend button { font-size: 11px; padding: 0 } #live { padding: 5px 0; font-size: 12px } #overview { bottom: 145px; left: 5%; font-size: 10px } #empty { inset: 20% 5% 50% } }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important } }
 </style>
-<canvas id="cloth"></canvas>
+<canvas id="cloth" aria-label="Interactive embroidered agent activity. Drag to pan, scroll to zoom, or select a stitch." tabindex="0"></canvas>
 <div id="vignette"></div>
-<header><h1>Tapestry</h1><p hidden></p></header>
-<div id="hint">drag to pan · wheel to zoom · click a stitch</div>
+<header><h1>Tapestry</h1><p id="date" hidden></p><button id="follow" aria-pressed="false"><span class="dot"></span>Follow live</button></header>
 <div id="tip" hidden></div>
-<div id="empty" hidden>Nothing woven yet.<small>Start an agent session, then reload this read-only view.</small></div>
-<aside id="panel"></aside>
+<div id="empty" hidden>Nothing woven yet.<small>Start an agent session to begin this cloth.</small></div>
+<aside id="panel" aria-label="Stitch inspector">
+  <h2 id="inspect-title">On the loom</h2><p class="subtitle" id="inspect-subtitle">Select a stitch to explore</p>
+  <div class="panel-row"><svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="10" cy="7" r="3"/><path d="M2 22v-3c0-5 16-5 16 0v3ZM18 5c6 0 6 7 0 7m2 3c4 0 5 3 4 7"/></svg><span id="connection-count">A local record, woven in thread</span></div>
+  <button id="trace" class="panel-row" aria-pressed="false"><svg viewBox="0 0 26 26" aria-hidden="true"><path d="m5 14 15-9M5 14l14 8"/><circle cx="5" cy="14" r="2.5"/><circle cx="20" cy="5" r="2.5"/><circle cx="19" cy="22" r="2.5"/></svg><span>Trace connections</span></button>
+  <div id="inspect-body"></div>
+  <figure id="detail"><canvas id="detail-canvas" aria-label="Magnified view of the selected embroidery"></canvas><figcaption>Stitch detail</figcaption></figure>
+  <div id="hint">drag to pan · wheel to zoom<br>click a stitch · F to frame the cloth</div>
+</aside>
+<button id="inspect-toggle" aria-controls="panel" aria-expanded="false">Stitch detail ↗</button>
+<button id="overview" title="Show the whole cloth (F)">Frame the cloth ↗</button>
+<nav id="playback" aria-label="Tapestry playback">
+  <button id="play" aria-label="Replay the weave"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 2 13 8L5 18Z"/></svg></button>
+  <div id="timeline"><time id="start-time">—</time><div id="scrub-wrap"><input id="scrubber" type="range" min="0" max="1000" value="1000" aria-label="Replay position"><time id="mid-time">—</time></div><time id="end-time">—</time></div>
+  <select id="speed" aria-label="Replay speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+  <button id="live" aria-pressed="true"><span class="dot"></span>Live</button>
+  <div id="legend" aria-label="Agents"></div>
+</nav>
 <script type="module" src="/weave.js"></script>
 </html>

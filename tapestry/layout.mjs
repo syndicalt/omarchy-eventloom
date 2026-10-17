@@ -5,7 +5,7 @@
 import { borderKind } from "./motif.mjs";
 
 export const CELL = 12; // one motif: a 9-cell design, its tally, and breathing room
-const GUTTER = 8; // bare linen between neighbouring bands
+const GUTTER = 32; // bare linen between neighbouring bands
 const BORDER_ROW = 0.62; // session borders are shorter than a motif row
 
 const time = (stitch) => {
@@ -122,7 +122,7 @@ export function layoutWeave(spec) {
   // is gathered up rather than woven at full length.
   const t0 = actions[0].t;
   const t1 = actions.at(-1).t;
-  const bucketMs = Math.max(20_000, Math.min(30 * 60_000, (t1 - t0) / 24));
+  const bucketMs = Math.max(20_000, Math.min(30 * 60_000, (t1 - t0) / 12));
   const picks = [];
   for (const action of actions) {
     let pick = picks.at(-1);

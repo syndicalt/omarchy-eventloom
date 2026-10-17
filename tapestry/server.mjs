@@ -417,6 +417,7 @@ const ASSET_FILES = {
   "/yarn.js": "yarn.js",
   "/layout.mjs": "layout.mjs",
   "/motif.mjs": "motif.mjs",
+  "/playback.mjs": "playback.mjs",
 };
 // three.js is a pinned dependency, installed beside the runtime, and served
 // from there under the address the page imports. Its package exports the

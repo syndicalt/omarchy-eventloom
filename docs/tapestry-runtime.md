@@ -6,7 +6,7 @@ action an agent logs is embroidered onto it as its own counted design, each
 session is a band of designs that grows upward from its start, and whatever
 links one log line to another is a length of plied yarn.
 
-![The demo weave](tapestry-demo.jpg)
+![The live cloth, inspector and playback bar](../preview.jpg)
 
 ![Designs, a session tag, and a handoff cord](tapestry-detail.jpg)
 
@@ -25,6 +25,7 @@ links one log line to another is a length of plied yarn.
       layout.mjs: actions, bands, rows      motif.mjs: stitches per action
             ▼
       weave.js + fabric.js + yarn.js: the three.js scene
+      playback.mjs: reversible clock and connection selection
 
 The server never changes a shard. It reads the Eventloom envelope fields:
 timestamp, actorId, threadId, parentEventId, causedBy, payload, and
@@ -68,6 +69,45 @@ It neither reads nor writes logs.
 three.js r170 is a pinned dependency (`three` 0.170.0 in `package-lock.json`,
 MIT), installed with the runtime and served by the tapestry server itself, so
 the view works offline and loads nothing from the network.
+
+## Exploring the cloth
+
+The main camera opens on the newest work at a readable scale, reserving space
+for a fixed dark inspector and the bottom playback bar. **Frame the cloth**
+toggles between this close view and an overview; `F` selects the overview.
+Dragging and scrolling take control of the camera and turn off **Follow
+live**. Arrow keys on the focused cloth select neighboring actions.
+
+The inspector retains the event fields and hashes in an expandable detail
+section. Its close-up is a second three.js camera rendering the same scene,
+not an image: the selected stitches, linen, yarn and working needle are the
+actual geometry. On narrow screens it becomes a drawer opened by **Stitch
+detail**, or by selecting a stitch.
+
+**Trace connections** emphasizes the selected action or session and its direct
+neighbors. Unrelated embroidery softens into the linen and unrelated yarn
+fades. A traced selection is framed in the available viewport; links in the
+inspector select the corresponding action. The actor legend independently
+highlights an actor's work. These controls never filter or modify the log.
+
+The replay bar maps a wall-clock position into the sewing clock. Play/pause,
+backward and forward seeking, and 0.5×, 1×, 2× and 4× speed are supported. A
+merged tool action sits at its start position and carries its recorded final
+outcome. **Live** completes the existing weave and resumes four-second
+polling; **Follow live** also follows new work. Polling pauses during replay,
+and a response already in flight cannot replace a replay. The range labels
+use the log's actual timestamps in the browser's local timezone.
+
+Reduced-motion preferences suppress the initial and live sewing animations
+and camera transitions while retaining live polling. Explicit playback still
+works. The renderer rests when nothing changes, and hidden tabs do not poll
+or advance playback.
+
+Linen geometry has shallow folds and raised selvedges. The same displacement
+is applied to stitches, text, yarn, knots and their contact shadows, keeping
+them seated on the fabric. The needle follows the current motif's stitch
+endpoints, with a curved working thread, then rests beside the newest design.
+All materials remain procedural and all assets are served locally.
 
 ## From log lines to stitches
 
