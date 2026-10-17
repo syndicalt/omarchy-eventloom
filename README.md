@@ -22,6 +22,8 @@ $ eventloom tail --limit 4
 
 ![The Tapestry: a day of agent sessions woven as bands, one stitched design per action](preview.jpg)
 
+*Demo data showing session bands, shared-memory connections, stitch detail and replay controls.*
+
 *The Tapestry, Eventloom's view of the log: each band is a session growing
 upward from its start, each stitched design one thing an agent did.*
 
