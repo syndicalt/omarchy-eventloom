@@ -310,6 +310,19 @@ own counted design, each session a band growing upward from its start, and
 handoffs, forks, resumes and shared goals strung between designs as plied
 yarn. New log lines are stitched in as they arrive.
 
+The cloth opens close enough to read the designs. Drag to pan, scroll to
+zoom, or use **Frame the cloth** (`F`) to see the whole piece. Click a stitch
+for its details and a live magnified view of its embroidery. **Trace
+connections** follows its yarn to related sessions; the agent colors in the
+playback bar highlight one agent's work.
+
+Use the bottom bar to replay the selected log range, pause, scrub in either
+direction, and change speed. **Live** returns to new arrivals; **Follow
+live** keeps new work in view until you pan or zoom. Playback changes only
+the view. With reduced motion enabled, live events appear without automatic
+sewing or camera animation. On a small screen, **Stitch detail** opens the
+inspector.
+
 ![Designs, a session tag, and a handoff cord](docs/tapestry-detail.jpg)
 
 Start it with `eventloom tapestry`; it serves locally and loads nothing from
