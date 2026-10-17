@@ -109,7 +109,11 @@ CODEX_HOME and a loopback mock Responses server: session boundaries, local
 shell calls, opt-in briefing injection, chain verification and privacy.
 `npm run check:codex` repeats it without model charges or live account calls.
 OpenCode plugin/SDK 1.19.3 and Pi extension API 0.73.1 supplied the published
-contracts for their tests. Other new adapters use the references below and
+contracts for their tests. Claude Code 2.1.302 also passed a native loopback Messages check covering
+successful and failed tools, lifecycle, opted-in memory and privacy. Run
+`npm run check:claude` to repeat it. omp 18.8.6 passed the same native
+fixture with its real extension, including tool IDs; repeat with
+`npm run check:omp`. Other new adapters use the references below and
 real installer/wrapper tests with fixture payloads. They have not all been
 validated inside live agent sessions; older binaries may lack newer hooks.
 The full check exercises all 16 process commands using local disposable

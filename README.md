@@ -494,7 +494,9 @@ Prototype. Known limits:
   append at once, after which the shard refuses appends until
   `eventloom recover`.
 - The omp adapter is exercised in tests against omp's event shapes, not
-  inside a running omp. The Claude hook is tested through the installed
+  inside a running omp in the default suite. Optional native loopback checks
+  now pass on omp 18.8.6 and Claude Code 2.1.302 (`check:omp`, `check:claude`).
+  The Claude hook is also tested through the installed
   script with inputs written from Claude Code's hook reference.
 - No adapters yet for Codex, Grok or opencode.
 
