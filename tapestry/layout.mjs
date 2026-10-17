@@ -32,8 +32,9 @@ export function buildActions(stitches) {
   const open = new Map();
   for (const { stitch, t } of ordered) {
     const key = sessionKey(stitch);
+    const slot = JSON.stringify([key, stitch.tool ?? "", stitch.call ?? null]);
     if (stitch.family === "tool" && stitch.type !== "agent.tool.started") {
-      const queue = open.get(key + "\n" + (stitch.tool ?? ""));
+      const queue = open.get(slot);
       const started = queue?.shift();
       if (started) {
         started.pending = false;
@@ -62,7 +63,6 @@ export function buildActions(stitches) {
       events: [stitch],
     };
     if (action.pending) {
-      const slot = key + "\n" + (stitch.tool ?? "");
       (open.get(slot) ?? open.set(slot, []).get(slot)).push(action);
     }
     actions.push(action);
@@ -205,7 +205,9 @@ export function layoutWeave(spec) {
     band.x = columns[band.column].x;
     band.width = band.capacity * CELL;
     const final = band.actions.at(-1);
-    band.status = final.type === "agent.session.completed" ? "completed" : final.type === "agent.session.failed" ? "failed" : "open";
+    band.process = band.actions[0].type === "agent.process.started";
+    band.status = ["agent.session.completed", "agent.process.completed"].includes(final.type) ? "completed"
+      : ["agent.session.failed", "agent.process.failed"].includes(final.type) ? "failed" : "open";
     band.completion = band.status === "completed" || band.actions.some((action) => action.events.some((event) => event.goal_completed));
     band.failure = band.status === "failed" || band.actions.some((action) => !action.ok);
     band.toolCount = band.actions.filter((action) => action.family === "tool").length;

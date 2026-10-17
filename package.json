@@ -11,7 +11,8 @@
   "scripts": {
     "test": "node --test",
     "lint": "eslint . && tsc -p extensions",
-    "check": "npm run lint && npm test"
+    "check": "npm run lint && npm test",
+    "check:codex": "node scripts/check-codex.mjs"
   },
   "dependencies": {
     "@eventloom/runtime": "1.0.0",

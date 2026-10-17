@@ -7,8 +7,8 @@ day, every session your coding agents start and finish, every tool they call,
 every approval they ask for, and how each ended. Beside that it keeps a
 memory, if you turn it on: short summaries the agents write of their own
 replies, filed by project and handed to the next session that opens there,
-whichever agent it is. It captures omp and Claude
-Code out of the box, and anything else can write to it with one command. The
+whichever agent it is. It includes native adapters for twelve agents, with coverage described below.
+`eventloom run <agent>` adds process capture for all sixteen Omarchy targets. The
 log never leaves the machine, is redacted before anything is written, and is
 hash-chained, so a line that was edited or removed afterwards shows up.
 
@@ -94,6 +94,24 @@ Adding only clones the repository. Enabling starts a small background service
   beside it as `settings.json.eventloom-backup`, and a file that cannot be
   parsed is left alone.
 
+- the Codex hooks, if its configuration directory is present. Registration
+  updates `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`), preserves other
+  hooks, and backs up changed contents. `config.toml` and hook-trust records
+  are untouched. **Review and trust Eventloom's hooks in Codex `/hooks`**;
+  registration alone does not allow them to run.
+- the OpenCode plugin, if its configuration directory is present. It is a
+  local JavaScript file in `~/.config/opencode/plugins/` (under
+  `$XDG_CONFIG_HOME` when set); `opencode.json` and other plugins are kept.
+  It also covers an `OPENCODE_CONFIG_DIR` used alongside global config.
+- the Pi extension in `~/.pi/agent/extensions/` (or `$PI_CODING_AGENT_DIR`),
+  when that directory exists; other extensions and settings are preserved.
+- native command hooks for Copilot CLI, Gemini CLI, Crush, Grok, Antigravity,
+  Muse and Cursor CLI, when their configuration directories exist. Each uses
+  its own native format. JSON settings are backed up before changes, and
+  malformed files (including JSON with comments) are left unchanged.
+  No agent launcher is run to detect an installation. See the
+  [coverage and configuration reference](docs/agent-coverage.md).
+
 It finishes by running `eventloom doctor`, and it runs again by itself after
 `omarchy plugin update`, once the shell has restarted (or at once with
 `omarchy-shell eventloom install`). If it cannot finish you get one notification saying
@@ -157,8 +175,10 @@ eventloom recall --tag release   # narrowed by tag; also --correlation <id>, --a
 - **Written by the agent.** When a session opens, the adapter tells the agent
   how to record a summary and gives it the project's first summary (where
   the work began, however long ago) and the last 8.
-  Claude Code receives this through its SessionStart hook, omp before the
-  session's first turn. Whether a summary gets written is then up to the
+  Claude Code and Codex receive this through their SessionStart hooks, omp
+  before the session's first turn. Codex briefings include explicit actor
+  and session arguments for the note command so its notes are attributed
+  even without an agent session environment variable. Whether a summary gets written is then up to the
   agent: nothing forces it, and some replies will go unrecorded.
 - **Shared across agents.** A summary belongs to a project, not to the agent
   that wrote it, so omp starts from what Claude left and the reverse.
@@ -178,10 +198,11 @@ eventloom recall --tag release   # narrowed by tag; also --correlation <id>, --a
 
 | Type | Meaning | Emitted by |
 |---|---|---|
-| `agent.session.started` / `resumed` / `completed` | session lifecycle | omp, claude |
-| `agent.model.started` / `completed` | one model turn, with `duration_ms` | omp |
-| `agent.tool.started` / `completed` / `failed` | tool calls; inputs as argument names only | omp, claude (no `started`) |
-| `agent.approval.requested` / `resolved` | human-in-the-loop | omp |
+| `agent.process.started` / `completed` / `failed` | process boundaries, exit code and duration | `eventloom run`, all Omarchy agents |
+| `agent.session.started` / `resumed` / `completed` | native session lifecycle, where exposed | see adapter matrix below |
+| `agent.model.started` / `completed` / `failed` | turns or model invocations, depending on adapter | omp, Pi, OpenCode, Copilot, Gemini, Grok, Antigravity, Muse |
+| `agent.tool.started` / `completed` / `failed` | tool observations; inputs as argument names only | native adapters, subject to limits below |
+| `agent.approval.requested` / `resolved` | human-in-the-loop | omp; codex requests only |
 | `agent.note.added` | free-form annotation | `eventloom append` |
 | `agent.reply.summarized` | an agent's summary of its reply, with `project` and `tags` | `eventloom note` |
 | `agent.memory.recalled` | summaries handed to a session, by id | `eventloom recall`, session start |
@@ -197,7 +218,8 @@ Adapter payloads carry `session_id`, `correlation_id` and `occurred_at`.
 `occurred_at` is when the event happened; the envelope `timestamp` is when it
 was sealed. Set `EVENTLOOM_CORRELATION_ID` in an agent's environment to join
 its sessions to a task shared with other agents; otherwise each session
-correlates only with itself.
+correlates only with itself, and Codex subagents share their parent's
+correlation.
 
 ## Adapters
 
@@ -214,6 +236,94 @@ correlates only with itself.
   `PostToolUseFailure`. `settings.json` is never rewritten if it cannot be
   parsed, other hooks are left in place, and the previous contents are kept
   as `settings.json.eventloom-backup`.
+- **codex** — `hooks/eventloom-codex-hook.sh`, registered in
+  `$CODEX_HOME/hooks.json` (normally `~/.codex/hooks.json`) for `SessionStart`,
+  `SessionEnd`, `PreToolUse`, `PostToolUse`, `PermissionRequest`,
+  `SubagentStart`, and `SubagentStop`. Subagents have their own session bands
+  with a link to their parent. Tool-call IDs pair parallel calls correctly.
+  The adapter never approves, denies, rewrites, or blocks work; failures go
+  to the private error log and the hook exits successfully.
+
+  Tested against **Codex CLI 0.163.0**. Hosted tools such as web search do not
+  pass through tool hooks. `PermissionRequest` exposes the request, not the
+  eventual decision. Tool outcomes are recorded only when the result has
+  explicit structured status fields; current Codex shell hooks supply just
+  stdout, so those outcomes are marked **unknown**, including nonzero exits.
+  The end of a reply is not treated as a session ending. Memory is still
+  opt-in, and transcripts, prompts, argument values and output are never
+  stored. `doctor` checks registration; Codex's `/hooks` controls trust.
+  See the [official hook reference](https://learn.chatgpt.com/docs/hooks).
+
+- **opencode** — `extensions/opencode.js`, copied to
+  `~/.config/opencode/plugins/omarchy-eventloom.js`. A local plugin loads the
+  installed adapter without adding an npm dependency or editing OpenCode's
+  configuration. Sessions, turns, tool starts and outcomes, and permission
+  requests and decisions are recorded. An idle session stays open; deletion
+  or orderly server disposal closes it. Abrupt termination can lose the final
+  queued events. Tool snapshots are deduplicated by session and call ID.
+  Only argument names and structured status are retained; titles, prompts,
+  output, errors and permission patterns are discarded. Shared memory is
+  opt-in and uses the experimental system-context hook, with one recall per
+  session or compaction and explicit note attribution.
+
+  Tested against published plugin/SDK **1.19.3** contracts and the installed
+  loader in a disposable home. A native OpenCode run has not yet been tested
+  on this machine; its command is still a lazy launcher. See the
+  [plugin reference](https://opencode.ai/docs/plugins/).
+
+### Omarchy agent coverage
+
+The target is every agent in Omarchy's default-agent chooser. This matrix
+tracks the installed **4.0.0.alpha** chooser and upstream **quattro**, checked
+on **2026-10-16**. The [upstream chooser](https://github.com/omacom/omarchy/blob/quattro/bin/omarchy-default-agent)
+adds Ori, Antigravity and Kimi; the installed chooser still offers Gemini.
+Every row supports explicit process capture through `eventloom run`. Native
+hooks load on ordinary launches after installation and any agent-required
+trust review. Process capture alone does not observe tools, approvals or
+logical session boundaries. `eventloom agents` prints this inventory;
+`eventloom agents --json` exposes it to scripts.
+
+| Agent | Bundled capture | Automatic memory | Coverage notes |
+|---|---|---|---|
+| Claude Code | Native hooks | Opt-in | Sessions and completed/failed tools; no tool-start hook registered |
+| Oh My Pi | Native extension | Opt-in | Sessions, turns, tools, approval requests and decisions |
+| Codex | Native hooks | Opt-in | Sessions, subagents, local tools, approval requests; outcome and hosted-tool limits above |
+| OpenCode | Native plugin | Opt-in | SDK/plugin 1.19.3 contracts tested; native CLI validation pending |
+| Pi | Native extension | Opt-in | Separate Pi lifecycle; extension contract 0.73.1 tested |
+| Copilot CLI | Native hooks | Opt-in | Sessions, turns and tools; no documented parallel call IDs |
+| Crush | Partial native hooks | Manual | Top-level tool starts only; no completion or lifecycle hook |
+| Grok | Native hooks | Manual | Sessions, turns and tools; SessionStart stdout is ignored |
+| OpenClaw | Process capture | Manual | Native plugin integration pending |
+| Hermes | Process capture | Manual | Native CLI/gateway plugin integration pending |
+| Cursor CLI | Partial native hooks | Manual | Shell completions only; result status unknown |
+| Muse | Native hooks | Opt-in | Sessions, turns and tools; hook environment is cleared by Muse |
+| Ori | Process capture | Manual | Delegated agents can use their native adapters; `ori code` has process coverage |
+| Antigravity | Native hooks | Opt-in | Session starts, model invocations and tools; no session-end hook |
+| Kimi | Process capture | Manual | Native TOML-hook integration pending |
+| Gemini CLI | Native hooks | Opt-in | Sessions, turns and tools; no documented parallel call IDs |
+
+For example:
+
+```sh
+eventloom run codex
+eventloom run codex -- --help
+eventloom run hermes
+eventloom run ori -- code
+eventloom run kimi
+```
+
+Arguments and terminal streams pass directly to the agent and are not
+recorded. Its exit status is preserved. A wrapper process and a native
+session have different IDs, joined by a correlation ID when the native
+agent passes through the environment. Process capture supplies no automatic
+memory briefing; `eventloom recall` and `eventloom note` remain available.
+`EVENTLOOM_DISABLE=1 eventloom run …` still launches the agent, without
+recording the process.
+
+A new adapter must preserve other user configuration, uninstall cleanly,
+pass recording failures through without disrupting the agent, honor capture
+mode and memory opt-in, and document unsupported events. A registered hook
+is not proof that an agent has enabled or trusted it.
 
 To add an adapter: capture the agent's events out of band (its hooks or
 extension API, not a proxy), pipe them to `eventloom ingest` as one
@@ -356,6 +466,7 @@ every other hook untouched.
 npm install
 npm test        # node --test
 npm run lint    # eslint, and tsc over the omp extension
+npm run check:codex # optional: installed Codex, local mock model, no account calls
 ```
 
 `manifest.json` and `Service.qml` are the Omarchy plugin; `plugin/` holds the

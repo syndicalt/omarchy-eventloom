@@ -77,7 +77,62 @@ if [ -d "$HOME/.claude" ]; then
   say "claude adapter registered in ~/.claude/settings.json"
 fi
 
-# --- 6. settings, when there is someone to ask ---------------------------------
+# --- 6. Codex adapter, when its configuration directory is present ------------
+# Omarchy launchers are lazy installers: do not execute `codex` to detect it.
+codex_dir="${CODEX_HOME:-$HOME/.codex}"
+if [ -d "$codex_dir" ]; then
+  mkdir -p "$codex_dir/hooks"
+  cp "$REPO_DIR/hooks/eventloom-codex-hook.sh" "$codex_dir/hooks/"
+  chmod +x "$codex_dir/hooks/eventloom-codex-hook.sh"
+  "$BIN_DIR/eventloom" wire-codex-hooks >/dev/null \
+    || die "could not register the Codex hooks; fix $codex_dir/hooks.json and re-run"
+  say "codex adapter registered in $codex_dir/hooks.json"
+  say "review and trust Eventloom's hooks in Codex /hooks before they run"
+fi
+
+# OpenCode discovers local plugins without rewriting opencode.json or asking
+# Bun to install a dependency. Its global directory is loaded alongside any
+# OPENCODE_CONFIG_DIR, so install just one copy.
+opencode_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+if [ -d "$opencode_dir" ] || { [ -n "${OPENCODE_CONFIG_DIR:-}" ] && [ -d "$OPENCODE_CONFIG_DIR" ]; }; then
+  mkdir -p "$opencode_dir/plugins"
+  opencode_plugin="$opencode_dir/plugins/omarchy-eventloom.js"
+  if [ -e "$opencode_plugin" ] && ! grep -Fq 'omarchy-eventloom OpenCode adapter' "$opencode_plugin"; then
+    die "$opencode_plugin already exists and is not Eventloom's adapter; left unchanged"
+  fi
+  cp "$REPO_DIR/extensions/opencode.js" "$opencode_plugin"
+  say "opencode adapter installed (loads on the next OpenCode session)"
+fi
+
+# Pi has its own lifecycle/API, distinct from omp's fork. It loads local
+# extensions from its configured agent directory without config rewrites.
+pi_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+case "$pi_dir" in
+  "~") pi_dir="$HOME" ;;
+  "~/"*) pi_dir="$HOME/${pi_dir#\~/}" ;;
+esac
+if [ -d "$pi_dir" ]; then
+  mkdir -p "$pi_dir/extensions"
+  pi_extension="$pi_dir/extensions/omarchy-eventloom.js"
+  if [ -e "$pi_extension" ] && ! grep -Fq 'omarchy-eventloom Pi adapter' "$pi_extension"; then
+    die "$pi_extension already exists and is not Eventloom's adapter; left unchanged"
+  fi
+  cp "$REPO_DIR/extensions/pi.js" "$pi_extension"
+  say "pi adapter installed (loads on the next Pi session)"
+fi
+
+# Other native command hooks use agent-specific configuration formats. Only
+# existing agent homes are registered; no lazy agent installer is executed.
+native_script="$HOME/.local/share/eventloom/hooks/eventloom-native-hook.sh"
+mkdir -p "$(dirname "$native_script")"
+cp "$REPO_DIR/hooks/eventloom-native-hook.sh" "$native_script"
+chmod +x "$native_script"
+for agent in copilot gemini crush grok agy muse cursor-agent; do
+  "$BIN_DIR/eventloom" wire-native-hooks --agent "$agent" --if-present >/dev/null \
+    || die "could not register $agent hooks; its configuration was left unchanged"
+done
+
+# --- 7. settings, when there is someone to ask ---------------------------------
 # The Omarchy plugin runs this with no terminal; nothing is asked then, and
 # `eventloom config set` changes a setting later.
 if [ -t 0 ] && [ -t 1 ]; then
@@ -90,7 +145,7 @@ if [ -t 0 ] && [ -t 1 ]; then
       || say "kept port $port (change it with: eventloom config set tapestry_port <n>)"
   fi
   if [ "$("$BIN_DIR/eventloom" config get memory)" = off ]; then
-    printf '  Turn on shared memory? New Claude Code and omp sessions will be given the\n'
+    printf '  Turn on shared memory? New supported agent sessions will be given the\n'
     printf '  project'"'"'s recorded summaries and asked to add their own. [y/N]: '
     read -r answer || answer=""
     case "$answer" in
@@ -100,7 +155,7 @@ if [ -t 0 ] && [ -t 1 ]; then
   fi
 fi
 
-# --- 7. the install is done when doctor says the log works --------------------
+# --- 8. the install is done when doctor says the log works --------------------
 "$BIN_DIR/eventloom" doctor || die "doctor reported a failure above; the install is incomplete"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

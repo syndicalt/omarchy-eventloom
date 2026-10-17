@@ -108,6 +108,8 @@ test("a session with two turns and a tool call is one session, in order", option
   assert.equal(modelStarted.payload.model, "glm-5", "the model id, not the provider configuration");
   assert.deepEqual(toolStarted.payload.tool_input_keys, ["command", "timeout"]);
   assert.equal(typeof toolCompleted.payload.duration_ms, "number");
+  assert.equal(toolStarted.payload.tool_use_id, "c1");
+  assert.equal(toolCompleted.payload.tool_use_id, "c1");
   assert.doesNotMatch(JSON.stringify(events), /cat \.env|SECRET|10\.0\.0\.1/);
 });
 

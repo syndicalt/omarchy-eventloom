@@ -11,6 +11,68 @@
       "method": "claude-hooks",
       "agent_home": "~/.claude",
       "hook_path": "~/.claude/hooks/eventloom-hook.sh"
+    },
+    {
+      "agent": "codex",
+      "method": "codex-hooks",
+      "agent_home": "~/.codex",
+      "hook_path": "~/.codex/hooks/eventloom-codex-hook.sh"
+    },
+    {
+      "agent": "opencode",
+      "method": "local-plugin",
+      "agent_home": "~/.config/opencode",
+      "hook_path": "~/.config/opencode/plugins/omarchy-eventloom.js"
+    },
+    {
+      "agent": "pi",
+      "method": "extension",
+      "agent_home": "~/.pi/agent",
+      "hook_path": "~/.pi/agent/extensions/omarchy-eventloom.js"
+    },
+    {
+      "agent": "copilot",
+      "method": "native-hooks"
+    },
+    {
+      "agent": "gemini",
+      "method": "native-hooks"
+    },
+    {
+      "agent": "crush",
+      "method": "native-hooks"
+    },
+    {
+      "agent": "grok",
+      "method": "native-hooks"
+    },
+    {
+      "agent": "agy",
+      "method": "native-hooks"
+    },
+    {
+      "agent": "muse",
+      "method": "native-hooks"
+    },
+    {
+      "agent": "cursor-agent",
+      "method": "native-hooks"
+    },
+    {
+      "agent": "hermes",
+      "method": "process"
+    },
+    {
+      "agent": "openclaw",
+      "method": "process"
+    },
+    {
+      "agent": "kimi",
+      "method": "process"
+    },
+    {
+      "agent": "ori",
+      "method": "process"
     }
   ]
 }

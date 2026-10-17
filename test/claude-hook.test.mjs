@@ -8,6 +8,11 @@ const SESSION = hooks.SessionStart.session_id;
 const options = { now: new Date("2026-10-10T12:00:00.000Z"), env: {} };
 const convert = (hook) => claudeHookToEvent(hook, options);
 
+test("foreign harness compatibility hooks do not record Claude events or errors", () => {
+  assert.equal(convert({ hook_event_name: "PostToolUse", hookEventName: "post_tool_use", sessionId: "grok-session", toolName: "bash" }), null);
+  assert.equal(convert({ hook_event_name: "SessionStart", session_id: "cursor-session", cursor_version: "fixture" }), null);
+});
+
 test("session hooks map to the session lifecycle", () => {
   assert.deepEqual(convert(hooks.SessionStart), {
     type: "agent.session.started",
