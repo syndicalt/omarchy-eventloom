@@ -39,6 +39,8 @@ Item {
 
   property string setupState: "checking"
   property string detail: ""
+  property string observedRevision: ""
+  property string attemptedRevision: ""
 
   // `message` is fixed text, at most with a count or this plugin's path.
   function notify(message, urgency) {
@@ -52,12 +54,32 @@ Item {
   }
 
   function runSetup(force) {
-    if (setupProc.running) return "already running"
+    if (setupProc.running || updateProc.running) return "already running"
+    service.attemptedRevision = service.observedRevision
     service.setupState = force ? "installing" : "checking"
     setupProc.command = force ? ["sh", service.pluginDir + "/plugin/setup.sh", "--force"]
                           : ["sh", service.pluginDir + "/plugin/setup.sh"]
     setupProc.running = true
     return "started"
+  }
+
+  function checkForUpdate() {
+    if (setupProc.running || updateProc.running) return
+    updateProc.running = true
+  }
+
+  function finishCheck(exitCode, revision) {
+    if (exitCode !== 0 && exitCode !== 3) return
+    service.observedRevision = String(revision || "").trim()
+    if (exitCode === 0) {
+      if (!setupProc.running) {
+        service.setupState = "ready"
+        service.detail = "eventloom is up to date"
+      }
+      return
+    }
+    if (service.observedRevision && service.observedRevision !== service.attemptedRevision)
+      service.runSetup(false)
   }
 
   // Waits for the session to settle: a shell restart should not race the
@@ -66,7 +88,23 @@ Item {
     interval: 5000
     running: true
     repeat: false
-    onTriggered: service.runSetup(false)
+    onTriggered: service.checkForUpdate()
+  }
+
+  // Read-only revision checks are cheap. Installation runs once per observed
+  // revision; failures wait for a new revision or an explicit IPC retry.
+  Timer {
+    interval: 60000
+    running: true
+    repeat: true
+    onTriggered: service.checkForUpdate()
+  }
+
+  Process {
+    id: updateProc
+    command: ["sh", service.pluginDir + "/plugin/setup.sh", "--check"]
+    stdout: StdioCollector { id: updateOut; waitForEnd: true }
+    onExited: function(exitCode) { service.finishCheck(exitCode, updateOut.text) }
   }
 
   Process {

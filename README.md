@@ -132,8 +132,10 @@ memory if it is off. Without a terminal it preserves the existing settings;
 the defaults are port 4747 and memory off.
 
 It finishes by running `eventloom doctor`, and it runs again by itself after
-`omarchy plugin update`, once the shell has restarted (or at once with
-`omarchy-shell eventloom install`). If it cannot finish you get one notification saying
+`omarchy plugin update`, normally within one minute. The service checks the
+checkout revision without running the installer when it is already current.
+A failed revision is tried once; a new revision or
+`omarchy-shell eventloom install` retries it. If it cannot finish you get one notification saying
 so; the reason is in `omarchy-shell eventloom status`, and running
 `install.sh` in a terminal shows it in full. Notifications never quote what
 went wrong, because the text of a notification can be read by other users of
@@ -528,8 +530,3 @@ Prototype. Known limits:
   token cost, with `eventloom note` kept for what an agent or a person wants
   to record deliberately. Open: which model is good enough at that size, and
   how to ship a runtime for it.
-- **Reinstall after `omarchy plugin update` without a shell restart.** The
-  service installs when it loads, and an update does not reload it, so the
-  CLI and adapters stay on the old version until the shell restarts or
-  `omarchy-shell eventloom install` is run. The service should notice a
-  changed checkout by itself.

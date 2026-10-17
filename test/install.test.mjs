@@ -176,12 +176,16 @@ test("uninstall removes the install and its hooks, keeps the logs, and rejects u
 test("the plugin's setup installs once, then only when asked or when the checkout changed", (t) => {
   const box = machine(t);
   const stamp = path.join(box.home, ".local", "lib", "eventloom", ".installed-from");
+  const check = box.pluginSetup(["--check"], { env: { FAKE_NPM_FAIL: "1" } });
+  assert.equal(check.status, 3);
+  assert.equal(existsSync(path.join(box.home, ".local")), false, "checking a fresh home does not install anything");
 
   const first = box.pluginSetup();
   assert.equal(first.status, 0, first.output);
   assert.match(first.output, /install complete/);
   assert.equal(box.eventloom(["append", "agent.note.added"]).status, 0);
   const installedFrom = readFileSync(stamp, "utf8");
+  assert.deepEqual(box.pluginSetup(["--check"], { env: { FAKE_NPM_FAIL: "1" } }), { status: 0, output: installedFrom });
 
   // nothing to do: it must not even reach the package manager
   const second = box.pluginSetup([], { env: { FAKE_NPM_FAIL: "1" } });
@@ -189,6 +193,7 @@ test("the plugin's setup installs once, then only when asked or when the checkou
 
   // as after `omarchy plugin update`: the stamp names another commit
   writeFileSync(stamp, "an older commit\n");
+  assert.deepEqual(box.pluginSetup(["--check"], { env: { FAKE_NPM_FAIL: "1" } }), { status: 3, output: installedFrom });
   const failed = box.pluginSetup([], { env: { FAKE_NPM_FAIL: "1" } });
   assert.equal(failed.status, 1);
   assert.equal(readFileSync(stamp, "utf8"), "an older commit\n", "a failed install does not claim to be current");

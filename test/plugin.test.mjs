@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { tempDir } from "./helpers.mjs";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
@@ -44,6 +45,45 @@ test("notifications say a verdict, never what a command printed", () => {
   }
   // and nothing else in the service starts a process with captured output
   assert.doesNotMatch(service.replace(/^\s*\/\/.*$/gm, ""), /(?:execDetached|command\s*=)[^\n]*(?:\.text|detail)/);
+});
+
+test("update checks install once per revision, avoid overlapping work, and allow manual retries", () => {
+  const source = readFileSync(path.join(REPO, "Service.qml"), "utf8");
+  const methods = ["runSetup", "checkForUpdate", "finishCheck"].map((name) => {
+    const found = source.match(new RegExp(`  function ${name}\\([^]*?^  }`, "m"));
+    assert.ok(found, name);
+    return found[0];
+  }).join("\n");
+  const ctx = { setupProc: { running: false }, updateProc: { running: false }, service: {
+    pluginDir: "/fixture", setupState: "checking", observedRevision: "", attemptedRevision: "",
+  } };
+  runInNewContext(`${methods}\nObject.assign(service,{runSetup,checkForUpdate,finishCheck});`, ctx);
+  const service = ctx.service;
+  service.checkForUpdate();
+  assert.equal(ctx.updateProc.running, true);
+  ctx.updateProc.running = false;
+  service.finishCheck(3, "revision-a\n");
+  assert.equal(ctx.setupProc.running, true);
+  assert.equal(service.attemptedRevision, "revision-a");
+  assert.equal(service.runSetup(true), "already running");
+  service.checkForUpdate();
+  assert.equal(ctx.updateProc.running, false);
+  // A failed setup never loops on the same revision.
+  ctx.setupProc.running = false;
+  service.setupState = "failed";
+  service.finishCheck(3, "revision-a");
+  assert.equal(ctx.setupProc.running, false);
+  assert.equal(service.runSetup(true), "started");
+  assert.equal(ctx.setupProc.command.at(-1), "--force");
+  ctx.setupProc.running = false;
+  service.finishCheck(3, "revision-b");
+  assert.equal(ctx.setupProc.running, true);
+  assert.equal(service.attemptedRevision, "revision-b");
+  ctx.setupProc.running = false;
+  service.setupState = "failed";
+  service.finishCheck(0, "revision-b");
+  assert.equal(service.setupState, "ready");
+  assert.equal(ctx.setupProc.running, false);
 });
 
 // A fresh clone is what Omarchy validates, so only what git would ship is
