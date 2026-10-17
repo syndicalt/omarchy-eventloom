@@ -16,6 +16,12 @@ test("Codex wiring preserves other hooks, is idempotent, and unwires exactly", (
   assert.equal(unwireCodexHooks(wired).removed, CODEX_HOOK_EVENTS.length);
   assert.deepEqual(original.hooks.Stop, wired.hooks.Stop);
   assert.equal(wired.hooks.SessionStart[0].hooks[0].command, "sh '/home/o'\\''brien/.codex/hooks/eventloom-codex-hook.sh'");
+  const titles = CODEX_HOOK_EVENTS.map(event => wired.hooks[event].at(-1).hooks[0].statusMessage);
+  assert.ok(titles.every(title => typeof title === "string" && title.startsWith("Eventloom: ")));
+  assert.equal(new Set(titles).size, CODEX_HOOK_EVENTS.length);
+  const legacy = structuredClone(wired);
+  for (const event of CODEX_HOOK_EVENTS) delete legacy.hooks[event].at(-1).hooks[0].statusMessage;
+  assert.deepEqual(wireCodexHooks(legacy, file), wired);
   const moved = wireCodexHooks(wired, "/new/eventloom-codex-hook.sh");
   assert.deepEqual(missingCodexHooks(moved, file), CODEX_HOOK_EVENTS);
   assert.deepEqual(missingCodexHooks(moved, "/new/eventloom-codex-hook.sh"), []);
