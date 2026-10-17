@@ -9,10 +9,12 @@ memory, if you turn it on: short summaries the agents write of their own
 replies, filed by project and handed to the next session that opens there,
 when that agent supports automatic memory. Twelve agents have native adapters,
 with the event coverage listed below. `eventloom run <agent>` adds process
-start and exit capture for every agent in Omarchy's chooser. The log never
-leaves the machine, is redacted before anything is written, and is
-hash-chained, so a line that was edited or removed afterwards shows up. An
-optional sealed mode keeps a record of the log that agents cannot rewrite.
+start and exit capture for the sixteen commands in the dated coverage matrix
+below. Eventloom does not upload the log. Payloads pass through best-effort
+redaction before being written to a SHA-256 hash chain. The chain detects
+inconsistent edits; by itself it cannot detect a fully recomputed history or
+a truncated newest tail. Optional sealed mode records protected checkpoints
+of that history. See [Integrity](#integrity) for the limits.
 
 ```
 $ eventloom tail --limit 4
@@ -26,54 +28,55 @@ $ eventloom tail --limit 4
 
 *Demo data showing session bands, shared-memory connections, stitch detail and replay controls.*
 
-*The Tapestry, Eventloom's view of the log: each band is a session growing
-upward from its start, each stitched design one thing an agent did.*
+*Each band shows a recorded session or wrapper process growing upward from
+its start; stitched designs represent recorded events.*
 
 ## Why
 
-Run more than one agent, or one agent for more than an afternoon, and three
-questions come up that nothing answers well:
+When work spans multiple agents or sessions, three questions come up:
 
 - **What happened while I was not watching?** Each agent keeps its own
-  transcript in its own place and format. There is no one place to see that
-  omp ran forty tool calls in a repository between two and three, that one
-  failed, and that Claude Code then picked the work up.
+  transcript in its own place and format. Eventloom combines the events its
+  adapters observe, so you can follow activity across agents and projects.
 - **Can I trust the record?** A transcript the agent itself can rewrite is not
-  evidence of what it did. Eventloom's log is written by adapters outside the
-  agent, sealed as a hash chain, and each day is anchored to the one before,
-  so `eventloom verify` notices an edited event, a shortened day and a
-  missing one. (What that does and does not protect against is spelled out
-  under [Integrity](#integrity).)
-- **How do agents find out about each other?** Agents on one machine work
-  blind. A shared log gives them, and you, one thing to read: `eventloom tail`
+  independent evidence of what it did. Eventloom records observations through
+  native hooks and extensions, hash-chains them, and links daily shards.
+  `eventloom verify` checks consistency and, with sealed mode enabled, protected
+  checkpoints. Neither mode proves that an agent reported events truthfully.
+  See [Integrity](#integrity).
+- **How do agents find out about each other?** A shared log gives agents and
+  their owner a common record to read: `eventloom tail`
   from a script, a hook or another agent, and a `correlation_id` that ties the
   sessions of different agents to the same task.
 
 It is mostly a record of *what happened*, not *what was said*. Of an agent's
-work the bundled adapters log tool names and argument names, never
-arguments, output or prompts. The one piece of content, if you turn memory
-on, is the summary an agent chooses to write of a reply (see
-[Memory](#memory)), which is what makes the rest readable. See [Privacy](#privacy).
+work the bundled adapters retain selected metadata, including tool names,
+argument key names, paths, identifiers and outcomes. They discard argument
+values, tool output and prompts. Automatic memory, when enabled and supported,
+asks agents to write short reply summaries. Explicit `eventloom note` calls
+can also record summaries while automatic memory is off. See
+[Memory](#memory) and [Privacy](#privacy).
 
 ## How it works
 
 ```
- omp ──extension──┐
-                  ├─► eventloom CLI ─► redact ─► seal ─► ~/.local/state/omarchy/agents/logs/
- Claude ──hooks───┤
- Codex ───hooks───┘                                         2026-10-12.jsonl   (one per day,
- anything ─ eventloom append / ingest                                           hash-chained)
+ native hooks / extensions ─┐
+ eventloom run <agent> ─────┼─► eventloom CLI ─► redact ─► daily JSONL hash chain
+ append / ingest ──────────┘                                      │
+                                     tail · verify · doctor · tapestry
                                                                  │
-                                    eventloom tail · verify · doctor · tapestry
+                                  optional seal file (checkpoint hashes)
 ```
 
-- **Adapters** sit outside the agents and use their official extension
-  points: an omp extension and hooks for Claude Code and Codex. With memory
-  on they
-  put one thing in front of the agent, the briefing when a session opens;
-  otherwise they stay silent, and a failure never stops the agent.
-- **The CLI** is the only writer. It adds where a session ran (host, Omarchy
-  release, git branch and commit), redacts, and hands the event to
+- **Adapters** use agent hooks, plugins and extension APIs. Extensions run
+  inside their host agent; command hooks run as child processes. These are
+  observers, not an independent security boundary. When memory is enabled,
+  supported adapters add a project briefing. Command hooks may also return
+  neutral protocol responses. Recording errors are caught where possible
+  and reported privately; queued events can be lost on termination.
+- **The CLI** writes events for the bundled adapters. It adds available
+  session provenance (host, Omarchy release, git branch and commit), redacts,
+  and hands the event to
   [@eventloom/runtime](https://github.com/syndicalt/eventloom), which seals it
   into the day's chain.
 - **Readers** are plain commands over plain JSONL, plus the Tapestry, a local
@@ -91,11 +94,11 @@ Adding only clones the repository. Enabling starts a small background service
 (no bar icon, no window) which, a few seconds later, installs everything:
 
 - the `eventloom` CLI into `~/.local/bin`, and its code into
-  `~/.local/lib/eventloom` with its two dependencies, `@eventloom/runtime`
+  `~/.local/lib/eventloom` with its two direct dependencies, `@eventloom/runtime`
   and `three` (for the Tapestry), exactly as `package-lock.json` pins them
-  (this is the one step that uses the network);
-- the omp extension, if omp is installed;
-- the Claude Code hooks, if Claude Code is installed. `~/.claude/settings.json`
+  (dependency installation uses the network);
+- the omp extension, when `~/.omp/agent` exists;
+- the Claude Code hooks, when `~/.claude` exists. `~/.claude/settings.json`
   is edited in place: other hooks are kept, the previous contents are saved
   beside it as `settings.json.eventloom-backup`, and a file that cannot be
   parsed is left alone.
@@ -140,8 +143,9 @@ as `CODEX_HOME`, `OPENCODE_CONFIG_DIR` or `PI_CODING_AGENT_DIR`.
 Run in a terminal, `install.sh` asks for the Tapestry's port, offers shared
 memory if it is off, then offers [sealed mode](#sealed-mode) if it is off.
 For sealed mode it prints a `sudo` command and runs nothing. Installed
-through the plugin there is no terminal, so it asks nothing: the default
-port is 4747, memory is off, and sealed mode is off. Change them with
+through the plugin there is no terminal, so it asks nothing and preserves
+existing settings. A fresh installation defaults to port 4747 and memory off;
+sealed mode requires separate manual setup. Change them with
 `eventloom config set tapestry_port <n>`, `eventloom config set memory on`,
 and `eventloom seal enable`.
 
@@ -195,8 +199,8 @@ agents can be asked to say: after a reply that changed, decided or found
 something, the agent records one to three sentences about it.
 
 Memory is off until you turn it on, because it changes what your agents are
-told: every new session is given instructions and the words of earlier
-sessions. `install.sh` asks when it runs in a terminal; otherwise:
+told: supported native adapters can add instructions and summaries from
+earlier sessions. Process capture alone does not add a briefing. `install.sh` asks when it runs in a terminal; otherwise:
 
 ```sh
 eventloom config set memory on    # or off; eventloom doctor shows which
@@ -211,27 +215,36 @@ eventloom recall                 # what was recorded for this project (git repos
 eventloom recall --tag release   # narrowed by tag; also --correlation <id>, --all, --limit, --days, --json
 ```
 
-- **Written by the agent.** When a session opens, the adapter tells the agent
-  how to record a summary and gives it the project's first summary (where
-  the work began, however long ago) and the last 8.
-  Claude Code and Codex receive this through their SessionStart hooks, omp
-  before the session's first turn. Codex briefings include explicit actor
+`recall` defaults to at most eight summaries from the thirty most recent
+daily shard files. `--days N` currently limits shard files, not elapsed calendar
+days; `--days all` searches every retained shard.
+
+- **Written by the agent or owner.** With memory on, a supported adapter
+  tells the agent how to record a summary and supplies the project's first
+  summary, however old, plus up to eight latest summaries from the thirty
+  most recent daily shards. The first is not repeated if already included.
+  Claude Code and Codex receive this through SessionStart hooks; omp and Pi
+  receive it before an agent turn, and other supported adapters use their
+  native context hooks. OpenCode's hook is experimental. Compaction or session
+  changes can trigger another briefing. Codex briefings include explicit actor
   and session arguments for the note command so its notes are attributed
-  even without an agent session environment variable. Whether a summary gets written is then up to the
-  agent: nothing forces it, and some replies will go unrecorded.
+  even without an agent session environment variable. Whether an agent writes
+  a summary is up to it; some replies go unrecorded. The owner can also call
+  `eventloom note` directly, regardless of the memory setting.
 - **Shared across agents.** A summary belongs to a project, not to the agent
   that wrote it, so omp starts from what Claude left and the reverse.
-- **Recall is recorded too.** Each time summaries are handed to a session an
-  `agent.memory.recalled` event names them. That is what makes a memory
-  thread: the Tapestry draws a gold thread from each summary to every session
-  that read it.
-- **Bounded.** A summary is at most 600 characters; longer text is refused so
-  the agent shortens it. It is read from standard input, never from the
+- **Attributed recall is recorded too.** When nonempty summaries are supplied
+  to an identified agent session, an `agent.memory.recalled` event names them.
+  Manual recall outside an attributed session does not emit this event.
+  The Tapestry links recorded recalls to their source summaries.
+  This records that context was supplied, not that the agent read or used it.
+- **Bounded.** A summary is at most 600 characters; longer text is refused. It is read from standard input, never from the
   command line, and is redacted like everything else.
 - **Your choice.** With memory off, sessions are neither briefed nor asked
   for summaries; `eventloom note` and `recall` still work when you use them
   yourself. `EVENTLOOM_MEMORY=1` or `0` overrides the setting for one
-  process, and `EVENTLOOM_MODE=metadata` keeps no content, so no memory.
+  process. `EVENTLOOM_MODE=metadata` drops summary text and suppresses
+  automatic briefings. Recall can still read summaries already stored.
 
 ## Events
 
@@ -241,12 +254,16 @@ eventloom recall --tag release   # narrowed by tag; also --correlation <id>, --a
 | `agent.session.started` / `resumed` / `completed` | native session lifecycle, where exposed | see adapter matrix below |
 | `agent.model.started` / `completed` / `failed` | turns or model invocations, depending on adapter | omp, Pi, OpenCode, Copilot, Gemini, Grok, Antigravity, Muse |
 | `agent.tool.started` / `completed` / `failed` | tool observations; inputs as argument names only | native adapters, subject to limits below |
-| `agent.approval.requested` / `resolved` | human-in-the-loop | omp; codex requests only |
+| `agent.approval.requested` / `resolved` | observed approval requests and decisions | omp and OpenCode; Codex requests only |
 | `agent.note.added` | free-form annotation | `eventloom append` |
 | `agent.reply.summarized` | an agent's summary of its reply, with `project` and `tags` | `eventloom note` |
-| `agent.memory.recalled` | summaries handed to a session, by id | `eventloom recall`, session start |
+| `agent.memory.recalled` | nonempty summaries supplied to an identified session, by id | attributed recall and supported briefings |
 | `eventloom.shard.anchored` | opens a shard; links it to the previous one | the store |
 | `eventloom.shard.acknowledged` | a shard was recovered or purged on purpose | `recover`, `purge` |
+
+A pre-tool observation records a requested call, not proof it executed.
+Model events describe harness turns or model-hook callbacks; they are not a
+provider request count or a measure of token usage.
 
 The tapestry also recognises `agent.session.failed`, `agent.handoff`,
 `agent.file.mutated` and `agent.git.mutated`; no bundled adapter emits them
@@ -254,8 +271,9 @@ yet. Any well-formed type is accepted and stored, except the `eventloom.*`
 types, which only eventloom itself writes.
 
 Adapter payloads carry `session_id`, `correlation_id` and `occurred_at`.
-`occurred_at` is when the event happened; the envelope `timestamp` is when it
-was sealed. Set `EVENTLOOM_CORRELATION_ID` in an agent's environment to join
+`occurred_at` is the adapter's observation time, or an agent-provided time
+where available; the envelope `timestamp` is assigned when the event is
+created for append. Neither is the protected seal helper's timestamp. Set `EVENTLOOM_CORRELATION_ID` in an agent's environment to join
 its sessions to a task shared with other agents; otherwise each session
 correlates only with itself, and Codex subagents share their parent's
 correlation.
@@ -265,11 +283,11 @@ correlation.
 - **omp** — `extensions/eventloom.ts`, copied to `~/.omp/agent/extensions/`.
   Queues events in memory and writes them in order through one
   `eventloom ingest` process at a time. At shutdown whatever is still queued
-  goes to a second process at once, so recording never keeps omp waiting;
+  goes to a second process at once, rather than waiting for the queue to drain;
   those last events can be sealed out of order, and `occurred_at` gives the
-  true one. The one wait is the briefing before a session's first turn,
-  which is given two seconds and then abandoned (with memory off it returns
-  at once, empty).
+  adapter's observation time. The one wait is the briefing before a session's first turn,
+  which is given two seconds and then abandoned. The CLI returns no briefing
+  when memory is off; `EVENTLOOM_MEMORY=0` skips the briefing request entirely.
 - **claude** — `hooks/eventloom-hook.sh`, registered in
   `~/.claude/settings.json` for `SessionStart`, `SessionEnd`, `PostToolUse` and
   `PostToolUseFailure`. `settings.json` is never rewritten if it cannot be
@@ -279,15 +297,17 @@ correlation.
   `$CODEX_HOME/hooks.json` (normally `~/.codex/hooks.json`) for `SessionStart`,
   `SessionEnd`, `PreToolUse`, `PostToolUse`, `PermissionRequest`,
   `SubagentStart`, and `SubagentStop`. Subagents have their own session bands
-  with a link to their parent. Tool-call IDs pair parallel calls correctly.
-  The adapter never approves, denies, rewrites, or blocks work; failures go
-  to the private error log and the hook exits successfully.
+  with a link to their parent. Supplied tool-call IDs distinguish parallel
+  calls. The observer returns no permission decisions or argument rewrites;
+  recording failures go to the private error log and its wrapper exits
+  successfully. Foreground hook execution can still add latency.
 
   Tested against **Codex CLI 0.163.0**. Hosted tools such as web search do not
   pass through tool hooks. `PermissionRequest` exposes the request, not the
   eventual decision. Tool outcomes are recorded only when the result has
-  explicit structured status fields; current Codex shell hooks supply just
-  stdout, so those outcomes are marked **unknown**, including nonzero exits.
+  explicit structured status fields; Codex shell hooks supplied just
+  stdout in the tested 0.163.0 fixture, so those outcomes are marked
+  **unknown**, including nonzero exits.
   The end of a reply is not treated as a session ending. Memory is still
   opt-in, and transcripts, prompts, argument values and output are never
   stored. `doctor` checks registration; Codex's `/hooks` controls trust.
@@ -314,11 +334,13 @@ correlation.
 
 The target is every agent in Omarchy's default-agent chooser. This matrix
 tracks the installed **4.0.0.alpha** chooser and upstream **quattro**, checked
-on **2026-10-16**. The [upstream chooser](https://github.com/omacom/omarchy/blob/quattro/bin/omarchy-default-agent)
+on **2026-10-17**. The [upstream chooser](https://github.com/omacom/omarchy/blob/quattro/bin/omarchy-default-agent)
 adds Ori, Antigravity and Kimi; the installed chooser still offers Gemini.
+Upstream also accepts `gemini` as an alias for Antigravity. The matrix covers
+the union of these choosers, not a claim that all commands are installed.
 Every row supports explicit process capture through `eventloom run`. Native
-hooks load on ordinary launches after installation and any agent-required
-trust review. Process capture alone does not observe tools, approvals or
+adapters can load on a new ordinary launch after registration, subject to
+agent versions, configuration, hook policy and any required trust review. Process capture alone does not observe tools, approvals or
 logical session boundaries. `eventloom agents` prints this inventory;
 `eventloom agents --json` exposes it to scripts.
 
@@ -369,24 +391,29 @@ extension API, not a proxy), pipe them to `eventloom ingest` as one
 `{"type","actor","thread","payload"}` object per line, and add an entry to
 `lib/adapters.json` so `eventloom doctor` checks it.
 
-Apart from the briefing when memory is on, adapters print nothing into a
-session. A failed
-write goes to
-`~/.local/state/omarchy/agents/eventloom-errors.log`, and `eventloom doctor`
-reports it.
+Adapters do not add conversational messages except opted-in briefings.
+Command hooks still return protocol output where required, such as Codex's
+empty JSON response. Recording diagnostics go to
+`~/.local/state/omarchy/agents/eventloom-errors.log`; `eventloom doctor`
+reports recent errors. This file is separate from the hash-chained log.
 
 ## Privacy
 
-- Of what an agent does, the bundled adapters record tool names and argument
-  names, never arguments, output or prompts. Of what it says, they record
-  only the summary the agent itself chooses to write when memory is on (see
-  Memory): a few sentences, not the reply. Other content enters the log only through
-  `eventloom append`, a third-party `ingest`, or an error message.
+- Bundled native observers select metadata rather than retain full hook
+  inputs: tool names, argument key names, IDs, paths, durations and available
+  outcomes. They discard prompts, transcripts, argument values and tool
+  output. Paths, names and identifiers can still reveal project information.
+  Explicit `eventloom note`, `append` and `ingest` calls can record content;
+  the memory setting controls automatic briefing, not permission to write a
+  summary. Diagnostic error text is kept in a separate redacted error log.
 - A summary is content. It is redacted like any other text, which is best
   effort (below), it is shown in the Tapestry, and it is given to later
-  sessions in the same project. Memory is off unless you turn it on.
-- Everything is redacted before sealing, because a sealed event cannot be
-  edited. In a structured payload this is exact: every string or number under
+  sessions in the same project. A briefing becomes part of the agent's context;
+  an agent using a remote model can send it to that provider. Memory is off
+  unless you turn it on.
+- Payloads pass through redaction before hashing. Editing stored text later
+  would invalidate its chain; redaction is not a way to remove secrets from
+  existing events. In a structured payload, every string or number under
   a secret-named key (`password`, `*_token`, `*_API_KEY`,
   `aws_secret_access_key`, `authorization`, `cookie`, their plurals, …) is
   replaced, however deeply nested. `tokens` is the exception: it is treated
@@ -423,14 +450,23 @@ reports it.
   password (`https://TOKEN@host`), other short flags, and secrets named in a
   language other than English. If free text may carry secrets you cannot name, use
   `EVENTLOOM_MODE=metadata`.
-- `EVENTLOOM_MODE=full` (default) | `summary` (every string cut to 200
-  characters) | `metadata` (an allow-list of structural fields, no content).
-- `EVENTLOOM_DISABLE=1` opts an agent out.
+- `EVENTLOOM_MODE=full` (default) keeps the redacted payload; it does not
+  enable full transcript capture in bundled adapters. `summary` truncates
+  payload strings after 200 characters and adds an ellipsis; it does not
+  generate summaries. `metadata` keeps only allowed scalar fields, dropping
+  summary text but retaining fields such as paths, host, IDs and tool names.
+  It is not anonymization.
+- `EVENTLOOM_DISABLE=1` disables bundled observation when the agent passes
+  it through. It does not disable explicit `append` or `note` commands.
+  Muse clears this override; use its native hook controls there.
 - `eventloom append --payload '…'` puts the payload on a command line, which
   other users of the machine can read in the process list while it runs. The
   bundled adapters pass events on standard input instead (`eventloom ingest`).
-- The log directory is mode `0700` and shards are `0600`. Nothing leaves the
-  machine. `eventloom purge <day>` deletes a day, with any copies `recover`
+- The installer restricts the default log directory to `0700` and its JSONL
+  shards to `0600`; new shards are also created with mode `0600`. Custom or
+  manually changed directory permissions should be checked with `doctor`.
+  Eventloom does not upload logs, but programs running as you and root can
+  read them. `eventloom purge <day>` deletes a day, with any copies `recover`
   set aside for it, and records that it did, so `verify` reports the gap as
   acknowledged and not as tampering.
 
@@ -438,8 +474,9 @@ reports it.
 
 Each shard is a SHA-256 hash chain, and each new shard opens with an anchor
 holding the previous shard's name and the hash and position of its last event
-at that moment. `eventloom verify` therefore detects an edited or reordered
-event, a deleted day, and a previous shard cut back past its anchor. Gaps left
+at that moment. `eventloom verify` detects inconsistent edits and reordering
+within retained chains, and missing or shortened shards referenced by a later
+anchor. Gaps left
 by `eventloom recover` and `eventloom purge` are recorded in the log and
 reported as warnings; anything that changes after such a record is an error
 again.
@@ -452,8 +489,8 @@ cut events off the end, or rewrite the log and recompute every hash, and
 
 ### Sealed mode
 
-Sealed mode closes that gap on the machine itself. It is off unless you turn
-it on, because turning it on takes root, once.
+Sealed mode adds protected checkpoints for recorded history on this machine.
+It is off until you perform the manual privileged setup.
 
 ```sh
 eventloom seal enable    # prints the one sudo command; eventloom never runs it
@@ -464,20 +501,27 @@ eventloom seal now       # seal the log's head immediately
 - The setup creates a system user, `eventloom-seal`, and a seal file that
   only that user can write: `/var/lib/eventloom-seal/<uid>.evtseal`. You can
   read it; neither you nor an agent running as you can change or delete it.
-- Eventloom appends to it by asking a small root-owned helper, through one
-  sudoers rule that allows that helper and nothing else. Each record is the
+- Eventloom asks a root-installed helper to append as `eventloom-seal`,
+  through a sudoers rule restricted to that helper. Each record is the
   day, the count of events and the hash of the last one, stamped with the
   helper's own clock. No log content.
-- The log is sealed when a session starts or ends and every 10 events, so at
-  most 9 events are unsealed at a time.
+- Eventloom attempts a seal at native session boundaries and when at least
+  10 events have accumulated since the last checkpoint. This is an interval
+  for attempts, not a guaranteed bound on the unsealed tail: pending or
+  failed attempts can leave more events unsealed. `doctor` and `seal status`
+  report the current state.
 - `eventloom verify` then also fails if the log does not hold, at each sealed
-  position, the sealed hash. That catches events cut off the end, a rewritten
-  log however consistent its hashes, and a deleted day.
+  position, the sealed hash. That catches truncation past a protected
+  checkpoint, a rewrite that changes its hash even with a consistent new
+  chain, and deletion of a shard that still has protected checkpoints.
 - `purge` and `recover` still work, and write a record in the seal file that
   cannot be removed. The gap is reported by `verify` from then on.
-- There is no setting for it. The log is sealed if its seal file exists, so
-  an agent cannot switch it off; it can only stop sealing, which shows as a
-  growing count of unsealed events.
+- There is no ordinary on/off setting: sealed mode applies when the seal
+  file exists and names the current log directory. `EVENTLOOM_LOG_DIR` can
+  redirect future writes to a different, unsealed directory; it does not
+  remove protected records of the original log. An agent can also stop
+  sealing or modify the user-owned client, so the seal is a checkpoint of
+  recorded history, not a guarantee of continued observation.
 
 What sealed mode does not do:
 
@@ -500,10 +544,11 @@ The design, and why each part is there, is in
 ## Visualization
 
 The **Tapestry** is a read-only view of the log as needlework, rendered with
-three.js: evenweave linen on a rod, every logged action embroidered as its
-own counted design, each session a band growing upward from its start, and
+three.js: evenweave linen on a rod, recorded activity embroidered as counted
+designs, each session or process a band growing upward from its start, and
 handoffs, forks, resumes and shared goals strung between designs as plied
-yarn. New log lines are stitched in as they arrive.
+yarn. New activity is stitched in as it arrives. Paired tool start/completion
+events share a design; internal shard anchors are omitted.
 
 The cloth opens close enough to read the designs. Drag to pan, scroll to
 zoom, or use **Frame the cloth** (`F`) to see the whole piece. Click a stitch
@@ -520,8 +565,9 @@ inspector.
 
 ![Designs, a session tag, and a handoff cord](docs/tapestry-detail.jpg)
 
-Start it with `eventloom tapestry`; it serves locally and loads nothing from
-the network. It prints the path of a page to open, which leads to
+Start a foreground server with `eventloom tapestry`; its assets and data
+are served over loopback, with no external assets or CDN. Keep that process
+running and open the private file path it prints. The file leads to
 http://127.0.0.1:4747/?days=7 and weaves the last 7 days of the log. Change
 the number in the address for more or fewer days, or remove `days` to weave
 the whole log (`--days N` or `--days all` sets what the address starts with).
@@ -532,13 +578,15 @@ tapestry_port <n>` remembers one (1024 to 65535) in
 terminal. `--port` or `EVENTLOOM_TAPESTRY_PORT` override it for one run.
 `eventloom doctor` reports the port and whether another program holds it.
 
-The Tapestry shows the log only to the user who started it. A local port can
-be reached by every user of the machine, so the server answers for the log
-only to a random key it makes each time it starts. The page it tells you to
-open is a file only you can read, and it carries that key to your browser.
-The bare address shows nothing, so a bookmark or a hand-typed address will
-not work in a new tab: open it again with `eventloom tapestry` (or
-`omarchy-shell eventloom tapestry`).
+The Tapestry protects log access with a random key generated on each server
+start. The private launch file, mode `0600`, carries it to the browser;
+requests for log data require that key. The bare address can load the UI but
+cannot read the log. A new tab or bookmark may lack the key: open the private
+launch file again, or use `omarchy-shell eventloom tapestry`, which reuses an
+existing server or starts one if needed. A second `eventloom tapestry` on
+the same port instead fails because the port is occupied. Other processes
+running as your user, root, and anyone given the key can access that run's
+log data; this does not isolate the log from your own agents.
 Pass `--correlation <goal-id>` (or append `correlation=<goal-id>` to the
 local URL) for a read-only goal-specific weave.
 Use `eventloom tapestry --demo` for a representative in-memory weave without
@@ -548,16 +596,30 @@ The projection and its stitch vocabulary are specified in
 
 ## Uninstall
 
+First disable the plugin so its service stops checking for updates and
+re-registering adapters. Close agent sessions that have loaded its extensions.
+
 ```sh
-~/.config/omarchy/plugins/syndicalt.eventloom/uninstall.sh           # keeps the logs
-~/.config/omarchy/plugins/syndicalt.eventloom/uninstall.sh --purge   # deletes them too
+omarchy plugin disable syndicalt.eventloom
+~/.config/omarchy/plugins/syndicalt.eventloom/uninstall.sh # keeps the logs
 omarchy plugin remove syndicalt.eventloom
 ```
 
-Run `uninstall.sh` first: removing the plugin only deletes its folder. The
-script removes the installed files, the OpenCode plugin, and the Claude and
-Codex hooks, leaving other hooks and plugins untouched. A script still referenced by user-owned
-hooks, or whose unregistration failed, is retained.
+To delete event logs too, replace the uninstaller line with
+`~/.config/omarchy/plugins/syndicalt.eventloom/uninstall.sh --purge`.
+Run the uninstaller before removing the checkout that contains it.
+The uninstaller removes the CLI/runtime, omp and Pi extensions, OpenCode
+plugin, and registered Claude, Codex and other native hooks. Unrelated hooks
+and plugins are retained. A hook wrapper still referenced by user-owned hooks,
+or whose unregistration failed, is kept. Settings backups are also kept.
+The uninstaller does not stop an already running Tapestry server.
+
+Privileged sealed-mode setup is retained, even with the uninstaller's
+`--purge`: that flag deletes the event logs and diagnostic error log, not the
+protected seal file. To remove privileged setup too, first run
+`eventloom seal disable` and inspect its printed sudo command while the CLI
+and setup script are still present. Sealed setup's separate
+`--remove --purge` option also deletes that account's seal file.
 
 ## Development
 
@@ -570,12 +632,17 @@ installing into your account or contacting the network.
 npm install
 npm test        # node --test
 npm run lint    # eslint, and tsc over the omp extension
-npm run check:codex # optional: installed Codex, local mock model, no account calls
+npm run check   # lint and the default test suite
+npm run check:codex  # optional: installed Codex, loopback model fixture
+npm run check:claude # optional: installed Claude Code, loopback model fixture
+npm run check:omp    # optional: installed omp, loopback model fixture
+npm run check:plugin # optional: real Quickshell, isolated HOME and stub installer
 ```
 
 `manifest.json` and `Service.qml` are the Omarchy plugin; `plugin/` holds the
-two scripts the service runs. `omarchy plugin validate .` needs a clean clone,
-since a development checkout's `node_modules` contains symlinks.
+service's setup and Tapestry-opening scripts. `omarchy plugin validate .`
+rejects symlinks, including any in a development `node_modules`; validate a
+checkout without those artifacts.
 
 `EVENTLOOM_LOG_DIR` points the log somewhere else, which is how the tests
 isolate themselves. The omp adapter tests load `extensions/eventloom.ts`
@@ -583,17 +650,18 @@ directly and are skipped on a Node without TypeScript support (before 22.18).
 
 ## Status
 
-Prototype. Known limits:
+Experimental software. Native fixture checks and the live Codex UAT cover
+specific versions and flows, not every agent or deployment. Known limits:
 
 - Every append re-verifies the day's shard, so its cost grows with the shard
-  (about 0.5 s at 30,000 events). The omp adapter batches. The Claude hook
-  runs in the foreground and pays this once per tool call.
+  and depends on storage and hardware. The omp adapter batches. Command
+  hooks run in the foreground, so logging can add latency to agent work.
 - Events from tool calls that Claude runs in parallel are sealed in the order
   their hooks reach the log, which may not be the order they finished in;
   `occurred_at` records when each hook ran.
-- A lock file left by a killed writer is removed after 30 seconds. Until
-  then each append waits 5 seconds for the lock and fails, and those events
-  are lost (the failures are in the error log). Removing the lock is an
+- The next append or recovery attempt can reclaim a lock at least 30 seconds
+  old. Appends normally wait up to 5 seconds for a held lock before failing;
+  failed writes are not automatically replayed by the bundled observers. Removing the lock is an
   inference about the writer, not proof: in rare timing two writers can
   append at once, after which the shard refuses appends until
   `eventloom recover`.
@@ -602,6 +670,10 @@ Prototype. Known limits:
   now pass on omp 18.8.6 and Claude Code 2.1.302 (`check:omp`, `check:claude`).
   The Claude hook is also tested through the installed
   script with inputs written from Claude Code's hook reference.
+- Seal helper and verification flows are tested with scratch directories,
+  and an existing sealed installation has been exercised with live agents.
+  The complete privileged setup/remove lifecycle has not been rerun from a
+  fresh system for 0.4.0.
 - Except for the Codex, Claude and omp native smoke checks, adapters are
   validated against documented event contracts and installed-loader tests,
   rather than live model sessions in each agent. Agent versions can expose
@@ -614,10 +686,8 @@ Prototype. Known limits:
   integrations beyond process capture, and validate the existing adapters
   against real installed agents. Track actual coverage and limitations in
   the matrix rather than treating hook registration as runtime validation.
-- **Summaries written by a local model.** Today an agent writes its own
-  summaries, which costs it tokens and depends on it doing so. A small model
-  run on the CPU (around a billion parameters, a few hundred megabytes,
-  downloaded at install) could summarize every reply in the background at no
-  token cost, with `eventloom note` kept for what an agent or a person wants
-  to record deliberately. Open: which model is good enough at that size, and
-  how to ship a runtime for it.
+- **Explore optional local summarization.** Today an agent or owner writes
+  summaries explicitly. A local model might reduce reliance on agents doing
+  so, but no model or inference runtime is selected or bundled, and the
+  installer downloads no model. This would need decisions about reply access,
+  opt-in behavior, summary quality, CPU and memory cost, and distribution.
