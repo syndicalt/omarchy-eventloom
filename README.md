@@ -112,6 +112,25 @@ Adding only clones the repository. Enabling starts a small background service
   No agent launcher is run to detect an installation. See the
   [coverage and configuration reference](docs/agent-coverage.md).
 
+The installer automatically registers bundled adapters for agents whose
+configuration directories exist, then prints registered and absent agents,
+process-only coverage, and any actions such as Codex hook trust. To set up an
+agent added later without downloads or launching its command, run:
+
+```sh
+eventloom agents setup
+eventloom agents setup --json
+```
+
+Repeat runs preserve unchanged files, disabled hooks, matchers, handler options
+and unrelated configuration. Restrictions and malformed settings are reported
+while setup continues for other agents. Start a new agent session to load an
+added adapter; Codex hook trust remains a separate step in `/hooks`.
+
+Run in a terminal, `install.sh` asks for the Tapestry port and offers shared
+memory if it is off. Without a terminal it preserves the existing settings;
+the defaults are port 4747 and memory off.
+
 It finishes by running `eventloom doctor`, and it runs again by itself after
 `omarchy plugin update`, once the shell has restarted (or at once with
 `omarchy-shell eventloom install`). If it cannot finish you get one notification saying

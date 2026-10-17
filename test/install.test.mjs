@@ -542,3 +542,69 @@ test("native hook config parse failures preserve bytes and leave a neutral wrapp
   const script = path.join(box.home, ".local/share/eventloom/hooks/eventloom-native-hook.sh");
   assert.deepEqual(box.sh(script, ["agy", "PreToolUse"], { input: "{}" }), { status: 0, output: '{"decision":"allow"}\n' });
 });
+
+test("agents setup connects agents added later without downloads or invoking launchers", (t) => {
+  const box = machine(t);
+  assert.equal(box.install().status, 0);
+  for (const dir of [".codex", ".omp/agent", ".config/opencode", ".pi/agent", ".gemini"]) mkdirSync(path.join(box.home, dir), { recursive: true });
+  for (const agent of ["codex", "omp", "opencode", "pi", "gemini"]) writeFileSync(path.join(box.tools, agent), '#!/bin/sh\ntouch "$HOME/launcher-ran"\nexit 99\n', { mode: 0o755 });
+  const result = box.eventloom(["agents", "setup", "--json"], { env: { FAKE_NPM_FAIL: "1" } });
+  assert.equal(result.status, 0, result.output);
+  const report = JSON.parse(result.output);
+  assert.equal(report.changed, true);
+  for (const agent of ["codex", "omp", "opencode", "pi", "gemini"]) assert.equal(report.agents.find(item => item.agent === agent).status, "registered");
+  assert.equal(existsSync(path.join(box.home, "launcher-ran")), false);
+  const config = path.join(box.home, ".codex/hooks.json"), loader = path.join(box.home, ".config/opencode/plugins/omarchy-eventloom.js");
+  const before = [statSync(config).mtimeMs, statSync(loader).mtimeMs];
+  const again = box.eventloom(["agents", "setup", "--json", "--quiet"]);
+  assert.deepEqual(again, { status: 0, output: "" });
+  assert.deepEqual([statSync(config).mtimeMs, statSync(loader).mtimeMs], before);
+  assert.match(box.eventloom(["agents", "setup"]).output, /Action: codex: review and trust/);
+  assert.equal(box.eventloom(["doctor"]).status, 0);
+  assert.equal(box.eventloom(["agents", "bogus"]).status, 1);
+});
+
+test("agents setup preserves disabled and restricted registrations while adding absent events", (t) => {
+  const box = machine(t);
+  mkdirSync(path.join(box.home, ".codex"));
+  mkdirSync(path.join(box.home, ".gemini"));
+  assert.equal(box.install().status, 0);
+  const codex = path.join(box.home, ".codex/hooks.json"), gemini = path.join(box.home, ".gemini/settings.json");
+  const settings = JSON.parse(readFileSync(codex));
+  settings.hooks.SessionStart[0].enabled = false;
+  settings.hooks.PreToolUse[0].matcher = "Bash";
+  settings.hooks.PostToolUse[0].hooks[0].enabled = false;
+  settings.hooks.Stop = [{ hooks: [{ type: "command", command: "my-own-hook" }] }];
+  const missing = settings.hooks.SessionEnd;
+  delete settings.hooks.SessionEnd;
+  writeFileSync(codex, JSON.stringify(settings));
+  const native = JSON.parse(readFileSync(gemini));
+  native.hooks.SessionStart[0].hooks[0].enabled = false;
+  const nativeBytes = JSON.stringify(native);
+  writeFileSync(gemini, nativeBytes);
+  const result = box.eventloom(["agents", "setup", "--json"]);
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(JSON.parse(readFileSync(codex)), { ...settings, hooks: { ...settings.hooks, SessionEnd: missing } });
+  assert.equal(readFileSync(gemini, "utf8"), nativeBytes);
+  const report = JSON.parse(result.output);
+  assert.match(report.agents.find(item => item.agent === "codex").attention, /left unchanged/);
+  assert.match(report.agents.find(item => item.agent === "gemini").attention, /left unchanged/);
+});
+
+test("agents setup isolates malformed configuration and retries after it is fixed", (t) => {
+  const box = machine(t);
+  assert.equal(box.install().status, 0);
+  for (const dir of [".codex", ".gemini"]) mkdirSync(path.join(box.home, dir));
+  const file = path.join(box.home, ".codex/hooks.json"), original = '{ "private": "do-not-echo", // not JSON\n}';
+  writeFileSync(file, original);
+  const result = box.eventloom(["agents", "setup", "--json"]);
+  assert.equal(result.status, 1);
+  assert.equal(readFileSync(file, "utf8"), original);
+  assert.doesNotMatch(result.output, /do-not-echo/);
+  const report = JSON.parse(result.output);
+  assert.equal(report.agents.find(item => item.agent === "codex").status, "error");
+  assert.equal(report.agents.find(item => item.agent === "gemini").status, "registered");
+  writeFileSync(file, "{}");
+  assert.equal(box.eventloom(["agents", "setup"]).status, 0);
+  assert.ok(JSON.parse(readFileSync(file)).hooks.SessionStart);
+});

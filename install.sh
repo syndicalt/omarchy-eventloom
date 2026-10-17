@@ -59,78 +59,12 @@ rm -rf "$HOME/.local/lib/tapestry"
 rm -rf "$LIB_DIR/tapestry/vendor"
 say "installed cli -> $BIN_DIR/eventloom"
 
-# --- 4. omp adapter, when omp is present --------------------------------------
-if [ -d "$HOME/.omp/agent" ]; then
-  mkdir -p "$HOME/.omp/agent/extensions"
-  cp "$REPO_DIR/extensions/eventloom.ts" "$HOME/.omp/agent/extensions/"
-  say "omp adapter installed (loads on the next omp session)"
-fi
-
-# --- 5. claude adapter, when Claude Code is present ---------------------------
-if [ -d "$HOME/.claude" ]; then
-  mkdir -p "$HOME/.claude/hooks"
-  cp "$REPO_DIR/hooks/eventloom-hook.sh" "$HOME/.claude/hooks/"
-  chmod +x "$HOME/.claude/hooks/eventloom-hook.sh"
-  rm -f "$HOME/.claude/hooks/eventloom-hook.mjs"
-  "$BIN_DIR/eventloom" wire-claude-hooks >/dev/null \
-    || die "could not register the Claude hooks; fix ~/.claude/settings.json as described above and re-run"
-  say "claude adapter registered in ~/.claude/settings.json"
-fi
-
-# --- 6. Codex adapter, when its configuration directory is present ------------
-# Omarchy launchers are lazy installers: do not execute `codex` to detect it.
-codex_dir="${CODEX_HOME:-$HOME/.codex}"
-if [ -d "$codex_dir" ]; then
-  mkdir -p "$codex_dir/hooks"
-  cp "$REPO_DIR/hooks/eventloom-codex-hook.sh" "$codex_dir/hooks/"
-  chmod +x "$codex_dir/hooks/eventloom-codex-hook.sh"
-  "$BIN_DIR/eventloom" wire-codex-hooks >/dev/null \
-    || die "could not register the Codex hooks; fix $codex_dir/hooks.json and re-run"
-  say "codex adapter registered in $codex_dir/hooks.json"
-  say "review and trust Eventloom's hooks in Codex /hooks before they run"
-fi
-
-# OpenCode discovers local plugins without rewriting opencode.json or asking
-# Bun to install a dependency. Its global directory is loaded alongside any
-# OPENCODE_CONFIG_DIR, so install just one copy.
-opencode_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
-if [ -d "$opencode_dir" ] || { [ -n "${OPENCODE_CONFIG_DIR:-}" ] && [ -d "$OPENCODE_CONFIG_DIR" ]; }; then
-  mkdir -p "$opencode_dir/plugins"
-  opencode_plugin="$opencode_dir/plugins/omarchy-eventloom.js"
-  if [ -e "$opencode_plugin" ] && ! grep -Fq 'omarchy-eventloom OpenCode adapter' "$opencode_plugin"; then
-    die "$opencode_plugin already exists and is not Eventloom's adapter; left unchanged"
-  fi
-  cp "$REPO_DIR/extensions/opencode.js" "$opencode_plugin"
-  say "opencode adapter installed (loads on the next OpenCode session)"
-fi
-
-# Pi has its own lifecycle/API, distinct from omp's fork. It loads local
-# extensions from its configured agent directory without config rewrites.
-pi_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-case "$pi_dir" in
-  "~") pi_dir="$HOME" ;;
-  "~/"*) pi_dir="$HOME/${pi_dir#\~/}" ;;
-esac
-if [ -d "$pi_dir" ]; then
-  mkdir -p "$pi_dir/extensions"
-  pi_extension="$pi_dir/extensions/omarchy-eventloom.js"
-  if [ -e "$pi_extension" ] && ! grep -Fq 'omarchy-eventloom Pi adapter' "$pi_extension"; then
-    die "$pi_extension already exists and is not Eventloom's adapter; left unchanged"
-  fi
-  cp "$REPO_DIR/extensions/pi.js" "$pi_extension"
-  say "pi adapter installed (loads on the next Pi session)"
-fi
-
-# Other native command hooks use agent-specific configuration formats. Only
-# existing agent homes are registered; no lazy agent installer is executed.
-native_script="$HOME/.local/share/eventloom/hooks/eventloom-native-hook.sh"
-mkdir -p "$(dirname "$native_script")"
-cp "$REPO_DIR/hooks/eventloom-native-hook.sh" "$native_script"
-chmod +x "$native_script"
-for agent in copilot gemini crush grok agy muse cursor-agent; do
-  "$BIN_DIR/eventloom" wire-native-hooks --agent "$agent" --if-present >/dev/null \
-    || die "could not register $agent hooks; its configuration was left unchanged"
-done
+# --- 4. adapters for existing agent configuration directories -----------------
+# Keep bundled sources for agents installed later; setup needs no network.
+mkdir -p "$LIB_DIR/hooks" "$LIB_DIR/extensions"
+cp "$REPO_DIR"/hooks/*.sh "$LIB_DIR/hooks/"
+cp "$REPO_DIR"/extensions/eventloom.ts "$REPO_DIR"/extensions/opencode.js "$REPO_DIR"/extensions/pi.js "$LIB_DIR/extensions/"
+"$BIN_DIR/eventloom" agents setup || die "could not set up every detected agent; fix the errors above and run: eventloom agents setup"
 
 # --- 7. settings, when there is someone to ask ---------------------------------
 # The Omarchy plugin runs this with no terminal; nothing is asked then, and

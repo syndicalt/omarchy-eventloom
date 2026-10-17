@@ -37,8 +37,15 @@ configuration edits are atomic, retain symlinks and modes, and leave an
 `.eventloom-backup`. Invalid JSON and JSONC are refused without modification.
 The shared shell wrapper stays behind after an unsuccessful unregistration;
 it returns a neutral response even after the Eventloom CLI has been removed.
-The installer registers only agents whose configuration directories exist;
-rerun it after first setting up another agent.
+`eventloom agents setup` registers bundled adapters for agents whose
+configuration directories exist. The installer runs it and prints a summary.
+Run it again after configuring another agent; no package manager or agent
+launcher is invoked. Use the command from your terminal for custom directory
+environment variables. A new session loads the adapter. Disabled flags,
+matchers, handler options and unrelated hooks are retained. Malformed settings
+are reported and left unchanged while setup continues for other agents.
+Registration does not grant Codex hook trust: review `/hooks` if the definitions
+have not already been trusted.
 
 | Agent | Native registration | Captured events and limits |
 |---|---|---|
