@@ -977,8 +977,9 @@ function updateInspector() {
   const connected = state.weave?.links.filter((link) => action ? link.from === action || link.to === action
     : hit?.band ? link.from.band === hit.band || link.to.band === hit.band : link.kind === "memory") ?? [];
   const readers = new Set(connected.filter((link) => link.kind === "memory").map((link) => link.to.key));
+  const processSelected = (action?.band ?? hit?.band)?.process;
   document.querySelector("#inspect-title").textContent = memory || !hit && readers.size ? "Shared memory"
-    : hit ? "Session thread" : "On the loom";
+    : hit ? processSelected ? "Agent process" : "Session thread" : "On the loom";
   document.querySelector("#inspect-subtitle").textContent = action?.events.at(-1)?.detail?.tags?.join?.(", ")
     || action?.events.at(-1)?.correlation || action?.band.sessionId || hit?.band?.sessionId
     || (state.weave?.actions.length ? `${state.weave.bands.length} sessions · ${state.weave.actions.length} motifs` : "Select a stitch to explore");

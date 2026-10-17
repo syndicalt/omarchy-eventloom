@@ -202,3 +202,10 @@ For screenshots and visual checks the page accepts:
     ?at=0.6           frozen part-way through the sewing
     ?zoom=x,y,d       frame a detail (cloth units, camera distance)
     ?fit=all          always frame the whole cloth
+
+## Process capture
+
+`eventloom run` events form separate process bands alongside any native
+sessions. Process completion and failure close those bands, and selecting
+one labels the inspector “Agent process.” A process band does not imply that
+tools or native session boundaries were observed.
