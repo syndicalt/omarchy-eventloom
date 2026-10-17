@@ -112,20 +112,25 @@ Adding only clones the repository. Enabling starts a small background service
   No agent launcher is run to detect an installation. See the
   [coverage and configuration reference](docs/agent-coverage.md).
 
-The installer automatically registers bundled adapters for agents whose
-configuration directories exist, then prints registered and absent agents,
-process-only coverage, and any actions such as Codex hook trust. To set up an
-agent added later without downloads or launching its command, run:
+Agent setup is automatic: the installer prints registered agents, agents not
+detected, process-only coverage, and any actions such as Codex hook trust.
+When the plugin is running, it checks for newly created agent configuration
+directories once a minute and registers missing adapters without downloads or
+launching agents. Start a new agent session to load an added adapter. For an
+immediate check, or a custom agent directory supplied through environment
+variables, run:
 
 ```sh
 eventloom agents setup
 eventloom agents setup --json
 ```
 
-Repeat runs preserve unchanged files, disabled hooks, matchers, handler options
-and unrelated configuration. Restrictions and malformed settings are reported
-while setup continues for other agents. Start a new agent session to load an
-added adapter; Codex hook trust remains a separate step in `/hooks`.
+Repeat runs leave unchanged files alone. Existing disabled hooks, matchers and
+handler options are preserved; restrictions and configuration errors are
+reported for you to resolve. Agent settings and hook trust still determine
+whether a registered adapter runs. The background check uses the shell
+service's environment; use the command from your terminal for overrides such
+as `CODEX_HOME`, `OPENCODE_CONFIG_DIR` or `PI_CODING_AGENT_DIR`.
 
 Run in a terminal, `install.sh` asks for the Tapestry port and offers shared
 memory if it is off. Without a terminal it preserves the existing settings;
@@ -134,6 +139,9 @@ the defaults are port 4747 and memory off.
 It finishes by running `eventloom doctor`, and it runs again by itself after
 `omarchy plugin update`, normally within one minute. The service checks the
 checkout revision without running the installer when it is already current.
+The service is kept loaded across plugin rescans: restart the shell once to
+load a changed service implementation. Later agent discovery and CLI updates
+then happen without restarting the shell.
 A failed revision is tried once; a new revision or
 `omarchy-shell eventloom install` retries it. If it cannot finish you get one notification saying
 so; the reason is in `omarchy-shell eventloom status`, and running

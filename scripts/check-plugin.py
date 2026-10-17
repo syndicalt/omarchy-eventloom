@@ -10,7 +10,7 @@ with tempfile.TemporaryDirectory(prefix='eventloom-qml-safe-') as temp:
  (plugin/'plugin/setup.sh').write_bytes((repo/'plugin/setup.sh').read_bytes())
  def version(v): (plugin/'package.json').write_text('{\n  "version": "'+v+'"\n}\n')
  version('fixture-1')
- (plugin/'install.sh').write_text('#!/bin/sh\nprintf "attempt\\n" >> "$HOME/attempts"\n[ ! -f "$HOME/fail" ] || exit 1\nmkdir -p "$HOME/.local/bin" "$HOME/.local/lib/eventloom"\nprintf "#!/bin/sh\\nexit 0\\n" > "$HOME/.local/bin/eventloom"\nchmod +x "$HOME/.local/bin/eventloom"\n')
+ (plugin/'install.sh').write_text('#!/bin/sh\nprintf "attempt\\n" >> "$HOME/attempts"\n[ ! -f "$HOME/fail" ] || exit 1\nmkdir -p "$HOME/.local/bin" "$HOME/.local/lib/eventloom"\ncat > "$HOME/.local/bin/eventloom" <<\'CLI\'\n#!/bin/sh\n[ "$1:$2" = "agents:setup" ] || exit 99\nprintf "check\\n" >> "$HOME/agent-checks"\nif [ -f "$HOME/late-agent" ] && [ ! -f "$HOME/agent-connected" ]; then\n  touch "$HOME/agent-connected"\n  printf \'%s\\n\' \'{"ok":true,"changed":true,"agents":[{"agent":"codex","changed":true,"status":"registered"}]}\'\nfi\nCLI\nchmod +x "$HOME/.local/bin/eventloom"\n')
  (home/'tools/omarchy-notification-send').write_text('#!/bin/sh\nexit 0\n');(home/'tools/omarchy-notification-send').chmod(0o755)
  env={'HOME':str(home),'PATH':str(home/'tools')+':/usr/bin:/bin','QT_QPA_PLATFORM':'offscreen','XDG_RUNTIME_DIR':str(runtime),'XDG_CACHE_HOME':str(home/'cache')}
  log=open(root/'qml.log','w+'); proc=subprocess.Popen(['/usr/bin/qs','--no-color','-p',str(plugin/'Service.qml')],env=env,stdout=log,stderr=log)
@@ -24,11 +24,13 @@ with tempfile.TemporaryDirectory(prefix='eventloom-qml-safe-') as temp:
   log.flush();log.seek(0);raise RuntimeError(log.read())
  try:
   until(lambda: attempts()==1 and (home/'.local/lib/eventloom/.installed-from').exists())
-  time.sleep(.7);assert attempts()==1
+  until(lambda: (home/'agent-checks').exists())
+  (home/'late-agent').touch();until(lambda: (home/'agent-connected').exists())
+  time.sleep(.7);assert attempts()==1,'agent setup triggered package installation'
   (home/'fail').touch();version('fixture-2');until(lambda: attempts()==2)
   time.sleep(.8);assert attempts()==2,'failed revision retried automatically'
   (home/'fail').unlink();version('fixture-3');until(lambda: attempts()==3 and (home/'.local/lib/eventloom/.installed-from').read_text().strip()=='version fixture-3')
-  print('QML runtime passed: automatic install, unchanged skip, one failed attempt, recovery on new revision; disposable HOME and stub installer.')
+  print('QML runtime passed: automatic install, unchanged skip, one failed attempt, recovery on new revision, later-agent setup without reinstall; disposable HOME and stub installer.')
  finally:
   proc.terminate()
   try: proc.wait(timeout=3)

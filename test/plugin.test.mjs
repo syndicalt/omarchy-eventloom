@@ -37,7 +37,7 @@ test("the service runs the scripts that exist, and they are executable", () => {
 test("notifications say a verdict, never what a command printed", () => {
   const service = readFileSync(path.join(REPO, manifest.entryPoints.service), "utf8");
   const sent = [...service.matchAll(/service\.notify\(([^]*?)(?:, "(?:low|normal|critical)")?\)\n/g)].map((match) => match[1]);
-  assert.equal(sent.length, 3);
+  assert.equal(sent.length, 5);
   for (const message of sent) {
     const outsideQuotes = message.replace(/"[^"]*"/g, "");
     const names = outsideQuotes.match(/[A-Za-z_][\w.]*/g) ?? [];
@@ -49,15 +49,15 @@ test("notifications say a verdict, never what a command printed", () => {
 
 test("update checks install once per revision, avoid overlapping work, and allow manual retries", () => {
   const source = readFileSync(path.join(REPO, "Service.qml"), "utf8");
-  const methods = ["runSetup", "checkForUpdate", "finishCheck"].map((name) => {
+  const methods = ["runSetup", "checkForUpdate", "finishCheck", "setupAgents"].map((name) => {
     const found = source.match(new RegExp(`  function ${name}\\([^]*?^  }`, "m"));
     assert.ok(found, name);
     return found[0];
   }).join("\n");
-  const ctx = { setupProc: { running: false }, updateProc: { running: false }, service: {
+  const ctx = { setupProc: { running: false }, updateProc: { running: false }, agentProc: { running: false }, service: {
     pluginDir: "/fixture", setupState: "checking", observedRevision: "", attemptedRevision: "",
   } };
-  runInNewContext(`${methods}\nObject.assign(service,{runSetup,checkForUpdate,finishCheck});`, ctx);
+  runInNewContext(`${methods}\nObject.assign(service,{runSetup,checkForUpdate,finishCheck,setupAgents});`, ctx);
   const service = ctx.service;
   service.checkForUpdate();
   assert.equal(ctx.updateProc.running, true);
@@ -84,6 +84,10 @@ test("update checks install once per revision, avoid overlapping work, and allow
   service.finishCheck(0, "revision-b");
   assert.equal(service.setupState, "ready");
   assert.equal(ctx.setupProc.running, false);
+  assert.equal(ctx.agentProc.running, true, "current install also checks for newly configured agents");
+  assert.equal(service.runSetup(true), "already running");
+  service.checkForUpdate();
+  assert.equal(ctx.updateProc.running, false, "agent registration and installation must not overlap");
 });
 
 // A fresh clone is what Omarchy validates, so only what git would ship is
