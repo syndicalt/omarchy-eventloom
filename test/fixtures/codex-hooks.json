@@ -1,0 +1,9 @@
+{
+  "SessionStart": { "session_id": "thr_parent", "cwd": "/work", "model": "fixture-model", "hook_event_name": "SessionStart", "source": "startup", "transcript_path": "/private/transcript" },
+  "SessionEnd": { "session_id": "thr_parent", "cwd": "/work", "hook_event_name": "SessionEnd", "reason": "other" },
+  "PreToolUse": { "session_id": "thr_parent", "cwd": "/work", "hook_event_name": "PreToolUse", "turn_id": "turn_1", "tool_name": "Bash", "tool_use_id": "call_1", "permission_mode": "default", "tool_input": { "command": "cat PRIVATE_ARGUMENT", "description": "PRIVATE_DESCRIPTION" } },
+  "PostToolUse": { "session_id": "thr_parent", "cwd": "/work", "hook_event_name": "PostToolUse", "turn_id": "turn_1", "tool_name": "Bash", "tool_use_id": "call_1", "tool_input": { "command": "PRIVATE_ARGUMENT" }, "tool_response": { "exit_code": 1, "output": "PRIVATE_OUTPUT" } },
+  "PermissionRequest": { "session_id": "thr_parent", "cwd": "/work", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "PRIVATE_ARGUMENT", "description": "PRIVATE_DESCRIPTION" } },
+  "SubagentStart": { "session_id": "thr_parent", "cwd": "/work", "hook_event_name": "SubagentStart", "agent_id": "thr_child", "agent_type": "explorer", "turn_id": "turn_1" },
+  "SubagentStop": { "session_id": "thr_parent", "cwd": "/work", "hook_event_name": "SubagentStop", "agent_id": "thr_child", "agent_type": "explorer", "last_assistant_message": "PRIVATE_REPLY", "agent_transcript_path": "/private/child-transcript", "stop_hook_active": false }
+}

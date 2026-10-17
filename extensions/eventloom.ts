@@ -241,6 +241,7 @@ export default function eventloomAdapter(omp: ExtensionApi): void {
     const args = event.args;
     emit("agent.tool.started", ctx, {
       tool: event.toolName,
+      tool_use_id: event.toolCallId,
       // argument names only: they say what kind of call it was without quoting it
       tool_input_keys: args !== null && typeof args === "object" ? Object.keys(args).sort() : undefined,
     });
@@ -252,6 +253,7 @@ export default function eventloomAdapter(omp: ExtensionApi): void {
     toolStartedAt.delete(event.toolCallId);
     emit(event.isError ? "agent.tool.failed" : "agent.tool.completed", ctx, {
       tool: event.toolName,
+      tool_use_id: event.toolCallId,
       duration_ms: startedAt === undefined ? undefined : Date.now() - startedAt,
     });
   });

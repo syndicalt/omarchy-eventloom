@@ -1,13 +1,33 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CELL, bandCapacity, buildActions, layoutWeave } from "../tapestry/layout.mjs";
-import { demoEvents, weaveSpec } from "../tapestry/server.mjs";
+import { demoEvents, deriveSessions, weaveSpec } from "../tapestry/server.mjs";
 
 const at = (minutes) => new Date(Date.UTC(2026, 9, 10, 12, 0) + minutes * 60_000).toISOString();
 const line = (id, minutes, type, session, extra = {}) => ({
   id, ts: at(minutes), type,
   family: type.includes("tool") ? "tool" : type.includes("handoff") ? "handoff" : type.includes("session") ? "lifecycle" : "note",
   actor: extra.actor ?? "omp", thread: "main", session, ok: !type.endsWith(".failed"), duration: 0, ...extra,
+});
+
+test("process capture gets a separate completed or failed band beside its native session", () => {
+  const stitches = [
+    line("p1", 0, "agent.process.started", "process", { family: "lifecycle" }),
+    line("s1", 1, "agent.session.started", "native"),
+    line("s2", 2, "agent.session.completed", "native"),
+    line("p2", 3, "agent.process.completed", "process", { family: "lifecycle" }),
+    line("f1", 4, "agent.process.started", "failed", { family: "lifecycle" }),
+    line("f2", 5, "agent.process.failed", "failed", { family: "lifecycle" }),
+  ];
+  const weave = layoutWeave({ stitches, links: [] });
+  const sessions = deriveSessions(stitches);
+  for (const bands of [weave.bands, sessions]) {
+    assert.equal(bands.length, 3);
+    assert.equal(bands.find((band) => band.sessionId === "process").status, "completed");
+    assert.equal(bands.find((band) => band.sessionId === "process").process, true);
+    assert.equal(bands.find((band) => band.sessionId === "native").process, false);
+    assert.equal(bands.find((band) => band.sessionId === "failed").status, "failed");
+  }
 });
 
 test("a tool's start and end are one action", () => {

@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import { tempDir } from "./helpers.mjs";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
@@ -36,7 +37,7 @@ test("the service runs the scripts that exist, and they are executable", () => {
 test("notifications say a verdict, never what a command printed", () => {
   const service = readFileSync(path.join(REPO, manifest.entryPoints.service), "utf8");
   const sent = [...service.matchAll(/service\.notify\(([^]*?)(?:, "(?:low|normal|critical)")?\)\n/g)].map((match) => match[1]);
-  assert.equal(sent.length, 3);
+  assert.equal(sent.length, 5);
   for (const message of sent) {
     const outsideQuotes = message.replace(/"[^"]*"/g, "");
     const names = outsideQuotes.match(/[A-Za-z_][\w.]*/g) ?? [];
@@ -44,6 +45,49 @@ test("notifications say a verdict, never what a command printed", () => {
   }
   // and nothing else in the service starts a process with captured output
   assert.doesNotMatch(service.replace(/^\s*\/\/.*$/gm, ""), /(?:execDetached|command\s*=)[^\n]*(?:\.text|detail)/);
+});
+
+test("update checks install once per revision, avoid overlapping work, and allow manual retries", () => {
+  const source = readFileSync(path.join(REPO, "Service.qml"), "utf8");
+  const methods = ["runSetup", "checkForUpdate", "finishCheck", "setupAgents"].map((name) => {
+    const found = source.match(new RegExp(`  function ${name}\\([^]*?^  }`, "m"));
+    assert.ok(found, name);
+    return found[0];
+  }).join("\n");
+  const ctx = { setupProc: { running: false }, updateProc: { running: false }, agentProc: { running: false }, service: {
+    pluginDir: "/fixture", setupState: "checking", observedRevision: "", attemptedRevision: "",
+  } };
+  runInNewContext(`${methods}\nObject.assign(service,{runSetup,checkForUpdate,finishCheck,setupAgents});`, ctx);
+  const service = ctx.service;
+  service.checkForUpdate();
+  assert.equal(ctx.updateProc.running, true);
+  ctx.updateProc.running = false;
+  service.finishCheck(3, "revision-a\n");
+  assert.equal(ctx.setupProc.running, true);
+  assert.equal(service.attemptedRevision, "revision-a");
+  assert.equal(service.runSetup(true), "already running");
+  service.checkForUpdate();
+  assert.equal(ctx.updateProc.running, false);
+  // A failed setup never loops on the same revision.
+  ctx.setupProc.running = false;
+  service.setupState = "failed";
+  service.finishCheck(3, "revision-a");
+  assert.equal(ctx.setupProc.running, false);
+  assert.equal(service.runSetup(true), "started");
+  assert.equal(ctx.setupProc.command.at(-1), "--force");
+  ctx.setupProc.running = false;
+  service.finishCheck(3, "revision-b");
+  assert.equal(ctx.setupProc.running, true);
+  assert.equal(service.attemptedRevision, "revision-b");
+  ctx.setupProc.running = false;
+  service.setupState = "failed";
+  service.finishCheck(0, "revision-b");
+  assert.equal(service.setupState, "ready");
+  assert.equal(ctx.setupProc.running, false);
+  assert.equal(ctx.agentProc.running, true, "current install also checks for newly configured agents");
+  assert.equal(service.runSetup(true), "already running");
+  service.checkForUpdate();
+  assert.equal(ctx.updateProc.running, false, "agent registration and installation must not overlap");
 });
 
 // A fresh clone is what Omarchy validates, so only what git would ship is

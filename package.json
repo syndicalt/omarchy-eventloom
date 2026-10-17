@@ -11,7 +11,11 @@
   "scripts": {
     "test": "node --test",
     "lint": "eslint . && tsc -p extensions",
-    "check": "npm run lint && npm test"
+    "check": "npm run lint && npm test",
+    "check:codex": "node scripts/check-codex.mjs",
+    "check:claude": "node scripts/check-messages-agent.mjs claude",
+    "check:omp": "node scripts/check-messages-agent.mjs omp",
+    "check:plugin": "python3 scripts/check-plugin.py"
   },
   "dependencies": {
     "@eventloom/runtime": "1.0.0",

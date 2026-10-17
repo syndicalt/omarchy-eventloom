@@ -59,25 +59,14 @@ rm -rf "$HOME/.local/lib/tapestry"
 rm -rf "$LIB_DIR/tapestry/vendor"
 say "installed cli -> $BIN_DIR/eventloom"
 
-# --- 4. omp adapter, when omp is present --------------------------------------
-if [ -d "$HOME/.omp/agent" ]; then
-  mkdir -p "$HOME/.omp/agent/extensions"
-  cp "$REPO_DIR/extensions/eventloom.ts" "$HOME/.omp/agent/extensions/"
-  say "omp adapter installed (loads on the next omp session)"
-fi
+# --- 4. adapters for existing agent configuration directories -----------------
+# Keep bundled sources for agents installed later; setup needs no network.
+mkdir -p "$LIB_DIR/hooks" "$LIB_DIR/extensions"
+cp "$REPO_DIR"/hooks/*.sh "$LIB_DIR/hooks/"
+cp "$REPO_DIR"/extensions/eventloom.ts "$REPO_DIR"/extensions/opencode.js "$REPO_DIR"/extensions/pi.js "$LIB_DIR/extensions/"
+"$BIN_DIR/eventloom" agents setup || die "could not set up every detected agent; fix the errors above and run: eventloom agents setup"
 
-# --- 5. claude adapter, when Claude Code is present ---------------------------
-if [ -d "$HOME/.claude" ]; then
-  mkdir -p "$HOME/.claude/hooks"
-  cp "$REPO_DIR/hooks/eventloom-hook.sh" "$HOME/.claude/hooks/"
-  chmod +x "$HOME/.claude/hooks/eventloom-hook.sh"
-  rm -f "$HOME/.claude/hooks/eventloom-hook.mjs"
-  "$BIN_DIR/eventloom" wire-claude-hooks >/dev/null \
-    || die "could not register the Claude hooks; fix ~/.claude/settings.json as described above and re-run"
-  say "claude adapter registered in ~/.claude/settings.json"
-fi
-
-# --- 6. settings, when there is someone to ask ---------------------------------
+# --- 7. settings, when there is someone to ask ---------------------------------
 # The Omarchy plugin runs this with no terminal; nothing is asked then, and
 # `eventloom config set` changes a setting later.
 if [ -t 0 ] && [ -t 1 ]; then
@@ -90,7 +79,7 @@ if [ -t 0 ] && [ -t 1 ]; then
       || say "kept port $port (change it with: eventloom config set tapestry_port <n>)"
   fi
   if [ "$("$BIN_DIR/eventloom" config get memory)" = off ]; then
-    printf '  Turn on shared memory? New Claude Code and omp sessions will be given the\n'
+    printf '  Turn on shared memory? New supported agent sessions will be given the\n'
     printf '  project'"'"'s recorded summaries and asked to add their own. [y/N]: '
     read -r answer || answer=""
     case "$answer" in
@@ -100,7 +89,7 @@ if [ -t 0 ] && [ -t 1 ]; then
   fi
 fi
 
-# --- 7. the install is done when doctor says the log works --------------------
+# --- 8. the install is done when doctor says the log works --------------------
 "$BIN_DIR/eventloom" doctor || die "doctor reported a failure above; the install is incomplete"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;

@@ -221,7 +221,7 @@ export function deriveSessions(stitches) {
     let previous = null;
     let ordinal = 0;
     for (const event of ordered) {
-      const boundary = event.type === "agent.session.started" || event.type === "agent.session.resumed";
+      const boundary = ["agent.session.started", "agent.session.resumed", "agent.process.started"].includes(event.type);
       if (!segment || boundary) {
         if (segment) sessions.push(segment);
         const resumed = event.type === "agent.session.resumed";
@@ -252,12 +252,13 @@ export function deriveSessions(stitches) {
     }
     const peak = Math.max(...counts, 1);
     const final = entries.at(-1);
-    const status = final.type === "agent.session.completed" ? "completed"
-      : final.type === "agent.session.failed" ? "failed" : "open";
+    const status = ["agent.session.completed", "agent.process.completed"].includes(final.type) ? "completed"
+      : ["agent.session.failed", "agent.process.failed"].includes(final.type) ? "failed" : "open";
     const activity = counts.map((count, i) => ({ t: (i + .5) / bins, count, value: count / peak }));
     return {
       id: session.id,
       sessionId: session.sessionId,
+      process: entries[0].type === "agent.process.started",
       actor: session.actor,
       thread: session.thread,
       start,
@@ -306,6 +307,9 @@ export function deriveLinks(stitches) {
     }
     const key = sessionKey(stitch);
     if (stitch.type === "agent.session.resumed") push(lastInSession.get(key), stitch.id, "resume");
+    if (stitch.type === "agent.session.started" && typeof stitch.payload?.parent_session_id === "string") {
+      push(lastInSession.get(stitch.payload.parent_session_id), stitch.id, "fork");
+    }
     lastInSession.set(key, stitch.id);
     if (stitch.family === "handoff") {
       const target = stitch.payload?.to_session_id ?? stitch.payload?.to ?? null;
@@ -333,7 +337,7 @@ export function deriveLinks(stitches) {
 
 // The payload fields the inspector may show. Everything else in a payload
 // stays in the shard.
-const DETAIL = ["summary", "tags", "project", "count", "model", "status", "reason", "title", "name", "kind", "fleet_event_type", "to", "from", "exit_code"];
+const DETAIL = ["summary", "tags", "project", "count", "model", "status", "reason", "title", "name", "kind", "fleet_event_type", "to", "from", "exit_code", "outcome", "parent_session_id", "agent_type"];
 // A summary is the one field shown whole: it is short by construction, and
 // reading it is the point.
 const WHOLE = new Set(["summary"]);
@@ -363,6 +367,7 @@ function slim(stitch) {
     session: stitch.session ?? null,
     correlation: stitch.correlation ?? null,
     tool: stitch.tool ?? null,
+    call: typeof stitch.payload?.tool_use_id === "string" ? stitch.payload.tool_use_id : null,
     duration: stitch.duration ?? 0,
     ok: stitch.ok !== false,
     goal_completed: stitch.payload?.goal_completed === true,
