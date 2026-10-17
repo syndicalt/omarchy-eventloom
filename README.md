@@ -483,6 +483,11 @@ every other hook untouched.
 
 ## Development
 
+`npm run check:plugin` optionally exercises the real Quickshell service with a
+disposable HOME and stub installer (requires Quickshell and Python 3). It checks
+update detection, unchanged revisions, failed attempts and recovery without
+installing into your account or contacting the network.
+
 ```sh
 npm install
 npm test        # node --test
