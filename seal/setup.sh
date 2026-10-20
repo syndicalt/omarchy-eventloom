@@ -33,8 +33,25 @@ group="$(id -gn "$owner")"
 rule="/etc/sudoers.d/eventloom-seal-$owner"
 file="$SEAL_DIR/$uid.evtseal"
 
+# The seal account may append to files, but must never choose the paths root
+# opens. Take directory ownership before inspecting any entry, including when
+# upgrading an older installation whose directory belonged to the seal user.
+# /var/lib is root-controlled, so that account cannot replace the directory
+# itself while ownership and permissions are being tightened.
+secure_seal_dir() {
+  [ ! -L "$SEAL_DIR" ] || die "$SEAL_DIR must not be a symbolic link"
+  if [ -e "$SEAL_DIR" ]; then
+    [ -d "$SEAL_DIR" ] || die "$SEAL_DIR must be a directory"
+    chown -h root:root "$SEAL_DIR"
+    chmod 0711 "$SEAL_DIR"
+  else
+    install -d -o root -g root -m 0711 "$SEAL_DIR"
+  fi
+}
+
 if [ "${1:-}" = --remove ]; then
   [ "$#" -eq 1 ] || [ "${2:-}" = --purge ] || die "usage: setup.sh --remove [--purge]"
+  if [ -e "$SEAL_DIR" ] || [ -L "$SEAL_DIR" ]; then secure_seal_dir; fi
   rm -f "$rule"
   say "removed $rule"
   # the helper and the user stay while any other account is still sealed
@@ -70,15 +87,22 @@ if ! id "$SEAL_USER" >/dev/null 2>&1; then
   say "created the system user $SEAL_USER"
 fi
 
+secure_seal_dir
+
 install -d -o root -g root -m 0755 "$(dirname "$HELPER")"
 install -o root -g root -m 0755 "$HERE/eventloom-seal" "$HELPER"
 say "installed $HELPER"
 
-# Others may pass through the directory to a file they are allowed to read,
-# and may not list it.
-install -d -o "$SEAL_USER" -g root -m 0711 "$SEAL_DIR"
+# With the directory now root-owned and not writable by the seal account,
+# these checks cannot race a path replacement by that account. Refuse both
+# dangling and live symlinks, non-regular files, and pre-existing hard links.
+[ ! -L "$file" ] || die "$file must not be a symbolic link"
+if [ -e "$file" ]; then
+  [ -f "$file" ] || die "$file must be a regular file"
+  [ "$(stat -c %h -- "$file")" -eq 1 ] || die "$file must not have hard links"
+fi
 if [ ! -e "$file" ]; then
-  printf 'eventloom-seal %s uid=%s log=%s\n' "$("$HELPER" version)" "$uid" "$log_dir" >"$file"
+  (set -C; umask 077; printf 'eventloom-seal %s uid=%s log=%s\n' "$("$HELPER" version)" "$uid" "$log_dir" >"$file") || die "could not create $file exclusively"
   say "created $file, the seal of $log_dir"
 elif ! head -n 1 "$file" | grep -Fqx "eventloom-seal $("$HELPER" version) uid=$uid log=$log_dir"; then
   die "$file already exists and is the seal of something else: $(head -n 1 "$file"). To start again: setup.sh --remove --purge"
