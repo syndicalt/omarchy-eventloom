@@ -41,6 +41,7 @@ writes the seal file. It asks a helper, which runs as another user, to append.
 | Part | What it is |
 |---|---|
 | Seal user | A system account, `eventloom-seal`, with no login shell. |
+| Seal directory | `/var/lib/eventloom-seal`, owned by root, mode `0711`. The seal account can traverse it but cannot create, replace or remove entries. Setup takes root ownership before inspecting files, including when migrating older installations, and refuses symbolic links, hard-linked seal files and non-regular seal files. |
 | Seal file | `/var/lib/eventloom-seal/<uid>.evtseal`. Owned by the seal user, group the log owner's primary group, mode `0640`: the owner reads it, nobody but the seal user writes it. One file per log owner, so several users of a machine can each seal. |
 | Helper | `/usr/local/libexec/eventloom-seal`, owned by root, mode `0755`. POSIX shell and `sha256sum`, `flock`, `date` from the system. It runs nothing from a home directory, because the agent can change what is there. |
 | Sudoers rule | `/etc/sudoers.d/eventloom-seal-<user>`, one per sealed account: that user may run the helper, and only the helper, as `eventloom-seal` without a password. Checked with `visudo -c` before it is installed. |

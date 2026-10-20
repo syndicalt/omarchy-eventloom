@@ -501,6 +501,10 @@ eventloom seal now       # seal the log's head immediately
 - The setup creates a system user, `eventloom-seal`, and a seal file that
   only that user can write: `/var/lib/eventloom-seal/<uid>.evtseal`. You can
   read it; neither you nor an agent running as you can change or delete it.
+  The directory belongs to root: the seal account can append to existing
+  files but cannot create, replace or remove directory entries. Rerunning
+  the updated setup migrates older directory ownership while retaining
+  history; it refuses symlinks, hard links and non-regular seal files.
 - Eventloom asks a root-installed helper to append as `eventloom-seal`,
   through a sudoers rule restricted to that helper. Each record is the
   day, the count of events and the hash of the last one, stamped with the
@@ -672,6 +676,10 @@ specific versions and flows, not every agent or deployment. Known limits:
   script with inputs written from Claude Code's hook reference.
 - Seal helper and verification flows are tested with scratch directories,
   and an existing sealed installation has been exercised with live agents.
+  On Linux hosts with `unshare`, subordinate UID/GID mappings and `bwrap`,
+  tests also run root setup in disposable namespaces with distinct owner
+  and seal accounts: migration, append, rerun, removal and unsafe paths.
+  Those tests skip explicitly when namespace support is unavailable.
   The complete privileged setup/remove lifecycle has not been rerun from a
   fresh system for 0.4.0.
 - Except for the Codex, Claude and omp native smoke checks, adapters are
