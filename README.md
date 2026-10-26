@@ -18,7 +18,7 @@ of that history. See [Integrity](#integrity) for the limits.
 
 ```
 $ eventloom tail --limit 4
-{"ts":"2026-10-12T14:02:11.482Z","type":"agent.session.started","actor":"claude","thread":"claude-0b9a…","payload":{"cwd":"/home/me/app","git_branch":"main","git_dirty":true,…}}
+{"ts":"2026-10-12T14:02:11.482Z","type":"agent.session.started","actor":"claude","thread":"claude-0b9a…","payload":{"cwd":"/home/me/app","git_branch":"main","git_commit":"c84fa2b79016",…}}
 {"ts":"2026-10-12T14:02:19.007Z","type":"agent.tool.completed","actor":"claude","thread":"claude-0b9a…","payload":{"tool":"Bash","tool_input_keys":["command","description"],…}}
 {"ts":"2026-10-12T14:02:24.650Z","type":"agent.tool.failed","actor":"omp","thread":"omp-01a1…","payload":{"tool":"read","duration_ms":12,…}}
 {"ts":"2026-10-12T14:03:40.118Z","type":"agent.session.completed","actor":"claude","thread":"claude-0b9a…","payload":{"reason":"prompt_input_exit",…}}
@@ -79,6 +79,11 @@ can also record summaries while automatic memory is off. See
   and hands the event to
   [@eventloom/runtime](https://github.com/syndicalt/eventloom), which seals it
   into the day's chain.
+  Automatic Git provenance reads references with `symbolic-ref` and
+  `rev-parse`; it does not run `git status` or inspect the index, working
+  files or submodules. This avoids invoking repository-configured fsmonitor
+  commands or clean filters before a trust decision. It no longer infers
+  `git_dirty`; older events and adapter-supplied values are preserved.
 - **Readers** are plain commands over plain JSONL, plus the Tapestry, a local
   page that weaves the log into a picture.
 
